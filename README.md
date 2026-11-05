@@ -38,6 +38,8 @@ Samsung's own driver on the S26 is also RADV-based and works, but on this phone 
 
 Other phones may work, but this is the only device the fork is tested on so far.
 
+> 📺 **Game Testing & Video Footage:** Check out gameplay performance tests and video showcases on the [Exynos Gaming YouTube Channel](https://www.youtube.com/@ExynosGaming-t7k).
+
 ## Game status
 
 | Game | Status |
