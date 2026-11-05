@@ -2934,10 +2934,33 @@ private:
         std::vector<u8> bytes;
         std::unique_lock lk{m_mutex};
         while (true) {
-            m_cv.wait(lk, [&] {
+            const auto ready = [&] {
                 return m_quit || m_flush || (!m_decoded.empty() && !m_free.empty()) ||
                        (!m_inputs.Empty() && m_decoded.size() < MaxDecodedAhead);
-            });
+            };
+            if (decoder && decoder->HasPendingOutput()) {
+                // An asynchronous (hardware) decoder finishes frames on its own: collect them
+                // while idle, or a client waiting for the next frame before it submits more input
+                // never gets it.
+                if (!m_cv.wait_for(lk, std::chrono::milliseconds{4}, ready)) {
+                    if (m_decoded.size() < MaxDecodedAhead) {
+                        lk.unlock();
+                        pictures.clear();
+                        decoder->Poll(pictures);
+                        lk.lock();
+                        m_decoded_frames += pictures.size();
+                        if (!m_flush) {
+                            for (auto& picture : pictures) {
+                                const u64 pts = picture.pts;
+                                m_decoded.push_back({std::move(picture), pts, false});
+                            }
+                        }
+                    }
+                    continue;
+                }
+            } else {
+                m_cv.wait(lk, ready);
+            }
             if (m_quit) {
                 return;
             }
@@ -3009,7 +3032,8 @@ private:
                                               std::min(input.data.size(), size_t{16})),
                                           " "));
                 }
-                decoder = std::make_unique<Tegra::Host1x::Nx2VideoDecoder>(codec);
+                decoder =
+                    std::make_unique<Tegra::Host1x::Nx2VideoDecoder>(codec, m_width, m_height);
             }
             pictures.clear();
             decoder->Decode(input.data, input.pts, pictures);
