@@ -2430,6 +2430,15 @@ BufferId BufferCache<P>::CreateBuffer(DAddr device_addr, u32 wanted_size,
     }
     Register(new_buffer_id);
     TouchBuffer(new_buffer, new_buffer_id);
+    // EDEN_NX2_GPU_PROFILE: large buffers, which the periodic summary (every 600 frames) misses
+    // when frames take seconds.
+    if (VideoCommon::Nx2Profile::Enabled() && size_bytes >= (size_t{32} << 20)) {
+        static u32 logged{};
+        if (logged++ < 64) {
+            LOG_INFO(HW_GPU, "Buffer cache: new {} MiB buffer at {:#x} ({} joined); {} MiB in all",
+                     size_bytes >> 20, overlap.begin, overlap.ids.size(), buffer_bytes >> 20);
+        }
+    }
     return new_buffer_id;
 }
 

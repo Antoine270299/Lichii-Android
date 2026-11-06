@@ -27,6 +27,7 @@ Users report game bugs with Lichii logs (`eden_log.txt`, `eden_log.txt.old`). Ea
 | 0400380020056000 | Raiders |
 | 0400D1D02399A000 | The Duskbloods network test |
 | 0400486024DEC000 | The Legend of Zelda: Ocarina of Time |
+| 0400C76024710000 | Pragmata |
 
 Add ids here when a report identifies a new game.
 
@@ -81,8 +82,9 @@ On Android, put them in `/sdcard/Android/data/<app id>/files/env.txt`, one `KEY=
 | A newly lowered program changes the image | `EDEN_NX2_REJECT_HASH=<hash>,...` (native program keys from shader dump file names, or shader hashes from the frame dump) | Those programs are rejected as if unsupported; the log shows `rejected by EDEN_NX2_REJECT_HASH` per hit. Bisect by halving the list. The key covers the captured code, so recompute it when the capture rules change. |
 | Draw and render-state questions | `EDEN_NX2_RENDER_TRACE=1`, filter `*:Info HW.GPU:Debug Render.Vulkan:Debug Shader:Debug` | Per-draw state, rejected stages and zero-format texture descriptors. |
 | Video playback | `EDEN_NX2_VDEC_TRACE=1`, `EDEN_NX2_VDEC_DUMP=<dir>` | Decoder submit, decode and composite trace; decoded frames. |
-| Performance and frame pacing | `EDEN_NX2_GPU_PROFILE=1`, `EDEN_DKB_FRAME_TRACE=1` | GPU thread time per second by zone; per-present interval, CPU and fence timing; `DKB gpu_work` lines give host GPU time per shader hash. |
-| Frozen picture, GPU fence never signals | `EDEN_NX2_HANG_WATCH=1` | When a wait for a GPU tick passes 3 s: the waited tick, the tick the GPU reached, the last submitted tick, and every unfinished submission with the pipelines (per-stage shader hashes) recorded into it. Tells a GPU-side hang (submitted, never finished) from an emulator deadlock (never submitted). |
+| Performance and frame pacing | `EDEN_NX2_GPU_PROFILE=1`, `EDEN_DKB_FRAME_TRACE=1` | GPU thread time per second by zone; per-present interval, CPU and fence timing; `DKB gpu_work` lines give host GPU time per shader hash. With the profile, `Finishes N/s waiting M ms/s at <file:line>` names who makes the GPU thread wait for the host GPU. |
+| Out of memory (Android low memory killer) | `EDEN_NX2_GPU_PROFILE=1` | Texture cache growth every 256 MiB with the driver's device memory, each image of 8 MiB or more (size, format, type, flags), new buffers of 32 MiB or more, and pooled staging every 128 MiB. Read them from logcat: the log file loses its last seconds when the process is killed. |
+| Frozen picture, GPU fence never signals | `EDEN_NX2_HANG_WATCH=1` | When a wait for a GPU tick passes 3 s: the waited tick, the tick the GPU reached, the last submitted tick, and every unfinished submission with the pipelines (per-stage shader hashes) recorded into it. Tells a GPU-side hang (submitted, never finished) from an emulator deadlock (never submitted). A watchdog also reports when the GPU tick stops for 5 s, and whether every submission finished (then the stall is on the CPU side). |
 | Host SPIR-V of a shader | `EDEN_NX2_SPIRV_DUMP=1` | Same as the `gpu_log_shader_dumps` setting: each pipeline's SPIR-V as `<title id>_<shader hash>.spv` in the dump directory, written before the driver compiles it. |
 | A slow shader on the host GPU | `EDEN_NX2_PIPELINE_STATS=1`; add `EDEN_NX2_PIPELINE_IR=<hash>` | Every driver statistic of each compute pipeline (`Pipeline stats <hash>`: registers, spills, scratch, code size, instructions); with `_IR`, that pipeline's driver IR and ISA as `pipeline-<hash>-*.txt` in the log directory. |
 | Command corruption or pop-in | `EDEN_NX2_PB_CHECK=1`; A/B with `EDEN_NX2_PB_SNAPSHOT=0` or `EDEN_NX2_FETCH_DRAIN=1` | How many pushbuffer entries change between submit and parse. |

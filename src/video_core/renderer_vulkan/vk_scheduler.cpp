@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <memory>
@@ -47,17 +48,23 @@ std::atomic<u64> g_profile_finish_ns{};
 std::atomic<u64> g_profile_window_start{};
 std::mutex g_profile_end_mutex;
 std::map<std::string, u64> g_profile_ends;
+/// Finishes by caller: count and nanoseconds waited.
+std::map<std::string, std::pair<u64, u64>> g_profile_finish_sites;
+
+std::string ProfileSite(const char* file, u32 line) {
+    std::string_view name{file};
+    if (const auto slash = name.find_last_of("/\\"); slash != std::string_view::npos) {
+        name.remove_prefix(slash + 1);
+    }
+    return fmt::format("{}:{}", name, line);
+}
 
 void CountRenderPassEnd(const char* file, u32 line) {
     if (!VideoCommon::Nx2Profile::Enabled()) {
         return;
     }
-    std::string_view name{file};
-    if (const auto slash = name.find_last_of('/'); slash != std::string_view::npos) {
-        name.remove_prefix(slash + 1);
-    }
     std::scoped_lock lock{g_profile_end_mutex};
-    ++g_profile_ends[fmt::format("{}:{}", name, line)];
+    ++g_profile_ends[ProfileSite(file, line)];
 }
 
 void ReportSubmitCounts() {
@@ -92,6 +99,21 @@ void ReportSubmitCounts() {
         LOG_INFO(Render_Vulkan, "Render pass ends {:.0f}/s at {}",
                  static_cast<double>(ends[i].first) / seconds, ends[i].second);
     }
+    std::vector<std::pair<std::pair<u64, u64>, std::string>> finishes;
+    {
+        std::scoped_lock lock{g_profile_end_mutex};
+        for (const auto& [site, totals] : g_profile_finish_sites) {
+            finishes.emplace_back(std::make_pair(totals.second, totals.first), site);
+        }
+        g_profile_finish_sites.clear();
+    }
+    std::sort(finishes.rbegin(), finishes.rend());
+    for (size_t i = 0; i < finishes.size() && i < 8; ++i) {
+        LOG_INFO(Render_Vulkan, "Finishes {:.0f}/s waiting {:.1f} ms/s at {}",
+                 static_cast<double>(finishes[i].first.second) / seconds,
+                 static_cast<double>(finishes[i].first.first) / 1e6 / seconds,
+                 finishes[i].second);
+    }
 }
 }
 
@@ -118,6 +140,7 @@ Scheduler::Scheduler(const Device& device_, StateTracker& state_tracker_)
         master_semaphore->on_stall = [this](u64 tick, u64 gpu_tick, u64 next_tick, u64 waited_s) {
             ReportStall(tick, gpu_tick, next_tick, waited_s);
         };
+        hang_watchdog = std::jthread([this](std::stop_token token) { HangWatchdog(token); });
     }
 
     if (Common::DkbFrameTrace::Enabled()) {
@@ -261,9 +284,13 @@ void Scheduler::Finish(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore,
     last_flush = std::chrono::steady_clock::now();
     flush_pending = false;
     if (profile) {
+        const u64 waited = VideoCommon::Nx2Profile::Now() - start;
         g_profile_finishes.fetch_add(1, std::memory_order_relaxed);
-        g_profile_finish_ns.fetch_add(VideoCommon::Nx2Profile::Now() - start,
-                                      std::memory_order_relaxed);
+        g_profile_finish_ns.fetch_add(waited, std::memory_order_relaxed);
+        std::scoped_lock lock{g_profile_end_mutex};
+        auto& site = g_profile_finish_sites[ProfileSite(location.file_name(), location.line())];
+        ++site.first;
+        site.second += waited;
     }
 }
 
@@ -633,6 +660,51 @@ void Scheduler::TraceComputePipeline(u64 hash) {
 void Scheduler::HangRecord(std::string pipeline) {
     if (hang_work.size() < 64 && std::ranges::find(hang_work, pipeline) == hang_work.end()) {
         hang_work.push_back(std::move(pipeline));
+    }
+}
+
+// A stall the waits cannot report: the GPU tick stops while work is pending, or a waiter is
+// stuck where no timeout reaches it. Logged once 5 s in, then every 15 s.
+void Scheduler::HangWatchdog(std::stop_token token) {
+    Common::SetCurrentThreadName("HangWatchdog");
+    u64 last_gpu_tick = 0;
+    auto last_change = std::chrono::steady_clock::now();
+    auto next_report = last_change;
+    while (!token.stop_requested()) {
+        std::this_thread::sleep_for(std::chrono::seconds{1});
+        master_semaphore->Refresh();
+        const u64 gpu_tick = master_semaphore->KnownGpuTick();
+        const u64 next_tick = master_semaphore->CurrentTick();
+        const auto now = std::chrono::steady_clock::now();
+        // Nothing submitted yet (the title is still loading): not a stall.
+        if (gpu_tick != last_gpu_tick || next_tick <= 1) {
+            last_gpu_tick = gpu_tick;
+            last_change = now;
+            continue;
+        }
+        if (now - last_change < std::chrono::seconds{5} || now < next_report) {
+            continue;
+        }
+        next_report = now + std::chrono::seconds{15};
+        bool worker_idle{};
+        {
+            std::scoped_lock lock{queue_mutex};
+            worker_idle = worker_waiting && work_queue.empty();
+        }
+        const auto still = std::chrono::duration_cast<std::chrono::seconds>(now - last_change);
+        // Ticks up to next_tick - 1 have been handed to the worker; the GPU being at
+        // next_tick - 1 means every submission finished and the stall is on the CPU side.
+        const bool gpu_pending = gpu_tick + 1 < next_tick;
+        LOG_WARNING(Render_Vulkan,
+                    "Hang watchdog: the GPU tick has been {} for {} s; next to record {}, worker "
+                    "{}, {}",
+                    gpu_tick, still.count(), next_tick,
+                    worker_idle ? "idle with nothing queued" : "busy or with work queued",
+                    gpu_pending ? "submitted GPU work is unfinished"
+                                : "every submission finished (the stall is not on the GPU)");
+        if (gpu_pending) {
+            ReportStall(next_tick - 1, gpu_tick, next_tick, 0);
+        }
     }
 }
 

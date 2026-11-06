@@ -3294,6 +3294,33 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     image.flags |= ImageFlagBits::Registered;
     total_used_memory += ImageMemoryBytes(slot_images[image_id]);
     image.lru_index = lru_cache.Insert(image_id, frame_tick);
+    // EDEN_NX2_GPU_PROFILE: the cache's growth within a frame, which collection (once a frame)
+    // cannot bound.
+    if (const u64 bytes = ImageMemoryBytes(slot_images[image_id]);
+        Nx2Profile::Enabled() && bytes >= (u64{8} << 20)) {
+        static u32 logged_images{};
+        if (logged_images++ < 96) {
+            LOG_INFO(HW_GPU,
+                     "Texture cache: image {}x{}x{} levels {} layers {} format {} type {} "
+                     "flags {:#x}: {} MiB",
+                     image.info.size.width, image.info.size.height, image.info.size.depth,
+                     image.info.resources.levels, image.info.resources.layers,
+                     static_cast<u32>(image.info.format), static_cast<u32>(image.info.type),
+                     static_cast<u32>(image.flags), bytes >> 20);
+        }
+    }
+    if (Nx2Profile::Enabled() && (total_used_memory >> 28) > (logged_memory_step >> 28)) {
+        logged_memory_step = total_used_memory;
+        u64 device_usage{};
+        if constexpr (requires { runtime.GetDeviceMemoryUsage(); }) {
+            device_usage = runtime.GetDeviceMemoryUsage();
+        }
+        LOG_INFO(HW_GPU,
+                 "Texture cache: {} MiB in use (critical {} MiB) at frame {}; device memory {} MiB",
+                 total_used_memory >> 20, critical_memory >> 20, frame_tick, device_usage >> 20);
+    } else if (total_used_memory < logged_memory_step) {
+        logged_memory_step = total_used_memory;
+    }
 
     ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, image_id](u64 page) {
         (*channel_state->gpu_page_table)[page].push_back(image_id);

@@ -475,6 +475,8 @@ private:
     std::vector<std::string> hang_work; ///< Worker thread: the submission being recorded
     std::mutex hang_mutex;
     std::deque<HangSubmission> hang_submissions;
+    /// Logs when the GPU tick stops advancing while work is pending, whoever waits for it.
+    void HangWatchdog(std::stop_token token);
     static constexpr u32 TraceMaxWork = 4096;
     struct WorkTrace {
         u64 hash{};
@@ -529,6 +531,8 @@ private:
     double last_target_fps{};
     u64 max_frame_count{};
     u64 frame_counter{};
+
+    std::jthread hang_watchdog; ///< Last: stops before the members it reads are destroyed
 };
 
 } // namespace Vulkan

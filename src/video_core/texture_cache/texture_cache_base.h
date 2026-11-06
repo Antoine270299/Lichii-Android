@@ -562,6 +562,7 @@ private:
     bool clearing_render_targets = false;
     bool is_rescaling = false;
     u64 total_used_memory = 0;
+    u64 logged_memory_step = 0;
     u64 minimum_memory;
     u64 expected_memory;
     u64 critical_memory;
