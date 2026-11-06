@@ -1969,11 +1969,15 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             }
             const bool target_between = std::any_of(relocations.begin(), relocations.end(),
                 [&](const Relocation& relocation) { return relocation.target > compare && relocation.target <= index; });
+            // The clamp's predicate can be any of UP0-UP6, as long as the USEL tests (unnegated)
+            // the one the UISETP.LT.U32 writes (Pu, bits 81-83): Pokemon Pokopia's sky shaders
+            // clamp through UP1, so their tables went untracked and the sky pass was skipped.
             if (opcode == 0x887 && native_predicate == 7 && compare < index && !target_between &&
-                condition == 0 && insn.words[1] <= 0x7ffff &&
+                condition < 7 && insn.words[1] <= 0x7ffff &&
                 code[compare].Bits(12, 4) == 7 && code[compare].Bits(24, 8) == insn.Bits(24, 8) &&
-                code[compare].words[1] == insn.words[1] && code[compare].words[2] == 0x0bf01070 &&
-                insn.words[2] == 0x08000000) {
+                code[compare].words[1] == insn.words[1] &&
+                code[compare].words[2] == (0x0bf01070U | (condition << 17)) &&
+                (insn.words[2] & ~0x03800000U) == 0x08000000U) {
                 // Preserve the unsigned clamp idiom for indirect-table analysis.
                 emit(0x3820000000070000ULL | target | (u64{a} << 8) |
                      (u64{insn.words[1]} << 20) | (u64{7} << 39));
