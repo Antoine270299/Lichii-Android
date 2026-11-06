@@ -164,8 +164,10 @@ public:
 
     /// Makes what was sent visible to the back.
     void Publish();
-    /// Waits until the back executed everything sent so far.
-    void Drain(DrainSite site = DrainSite::Other);
+    /// Waits until the back executed everything sent so far, and (`uses_scheduler`) has run its
+    /// idle hook, so the caller may use the Vulkan scheduler. Callers that only read guest memory
+    /// (semaphore acquires) need the first part alone.
+    void Drain(DrainSite site = DrainSite::Other, bool uses_scheduler = true);
 
     /// Compute or copy work was just sent: what can write GPU-written command lists.
     void NoteWriter() {

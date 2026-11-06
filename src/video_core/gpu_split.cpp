@@ -199,9 +199,9 @@ void GpuSplit::Publish() {
     }
 }
 
-void GpuSplit::Drain(DrainSite site) {
+void GpuSplit::Drain(DrainSite site, bool uses_scheduler) {
     consumed_cache = consumed.load(std::memory_order_acquire);
-    if (consumed_cache == write_position && BackQuiet()) {
+    if (consumed_cache == write_position && (!uses_scheduler || BackQuiet())) {
         return;
     }
     Publish();
@@ -213,7 +213,7 @@ void GpuSplit::Drain(DrainSite site) {
     for (u32 spins = 0;; ++spins) {
         consumed_cache = consumed.load(std::memory_order_acquire);
         if (consumed_cache == write_position) {
-            if (BackQuiet()) {
+            if (!uses_scheduler || BackQuiet()) {
                 publish_every = 8;
                 Nx2Profile::AddDrain(site, start);
                 return;

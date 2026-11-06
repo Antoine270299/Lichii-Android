@@ -58,8 +58,12 @@ void OnBack(const Func& func) {
     }
 }
 
+// Semaphore reads only need the back's queued work executed, not its idle hook's deferred submit
+// (#639's quiet wait, for callers that use the scheduler next): waiting for that at ~1,400
+// acquires a second made each one a Vulkan submission and kept Pokemon Pokopia's front waiting
+// ~480 ms a second. Flushes the read needs still run on the back (ReadSemaphoreWord).
 void DrainBack() {
-    VideoCommon::GpuSplit::Get().Drain(VideoCommon::DrainSite::Acquire);
+    VideoCommon::GpuSplit::Get().Drain(VideoCommon::DrainSite::Acquire, false);
 }
 
 // The fence manager records into the scheduler and downloads the CPU's writes over GPU data:
