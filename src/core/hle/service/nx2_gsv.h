@@ -1759,13 +1759,17 @@ private:
         // ahead, where it rewrote memory the GPU thread hadn't read yet (misread commands, then
         // a freeze or crash; rubberbanding while moving). Title 1 runs ahead without either.
         constexpr u64 DonkeyKongBananzaProgramId = 0x040074A01BF12000ULL;
-        // Ocarina waited ~12 ms a frame on its previous frame's fence here (#161).
+        // Ocarina waited ~12 ms a frame on its previous frame's fence here (#161). Pokemon Pokopia
+        // waited ~20 ms of its ~30 ms frames, its GPU and GPU thread taking turns: a frame ahead,
+        // ~24 ms frames on a Galaxy S26 (33 -> 41 FPS outdoors at 0.5x).
         constexpr u64 OcarinaOfTimeProgramId = 0x0400486024DEC000ULL;
+        constexpr u64 PokemonPokopiaProgramId = 0x0400A3A01EE4C000ULL;
         int frames_ahead = frames_ahead_setting;
         const u64 app_program_id = system.GetApplicationProcessProgramID();
         if (frames_ahead == -1 && app_program_id == DonkeyKongBananzaProgramId) {
             frames_ahead = 0;
-        } else if (frames_ahead == -1 && app_program_id == OcarinaOfTimeProgramId) {
+        } else if (frames_ahead == -1 && (app_program_id == OcarinaOfTimeProgramId ||
+                                          app_program_id == PokemonPokopiaProgramId)) {
             frames_ahead = 1;
         }
         const auto entered = std::chrono::steady_clock::now();
