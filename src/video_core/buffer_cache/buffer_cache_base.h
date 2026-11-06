@@ -658,8 +658,10 @@ private:
             return forced == 1;
         }
         static constexpr u64 PokemonPokopia = 0x0400A3A01EE4C000ULL;
+        static constexpr u64 Pragmata = 0x0400C76024710000ULL;
+        const u64 program_id = Settings::GetCurrentProgramID();
         return gpu_memory == nullptr || !gpu_memory->UsesNativeTiling() ||
-               Settings::GetCurrentProgramID() == PokemonPokopia;
+               program_id == PokemonPokopia || program_id == Pragmata;
     }
 
     /// Whether a GPU write to this range is copied back at the next fence. Ranges the guest CPU
@@ -736,6 +738,8 @@ private:
     std::optional<Async_Buffer> current_buffer;
 
     std::deque<Async_Buffer> async_buffers_death_ring;
+    /// Staging memory held by async_buffers, whose fences have not popped yet.
+    u64 async_download_bytes = 0;
 
     size_t immediate_buffer_capacity = 0;
     Common::ScratchBuffer<u8> immediate_buffer_alloc;

@@ -912,6 +912,21 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
         async_buffers.emplace_back(std::optional<Async_Buffer>{});
         return;
     }
+    // When the host GPU falls behind, every fence still takes a new staging buffer and none
+    // is reused until the GPU passes it: PRAGMATA's ~1.5 GB/s of downloads reached 7 GB in
+    // seconds and the process was killed for memory. Past the cap, keep the ranges for a
+    // later fence; a CPU read before then downloads them on the spot.
+    static constexpr u64 MaxAsyncDownloadBytes = 512_MiB;
+    if (async_download_bytes >= MaxAsyncDownloadBytes) {
+        auto& merged = committed_gpu_modified_ranges.front();
+        for (auto next = std::next(committed_gpu_modified_ranges.begin());
+             next != committed_gpu_modified_ranges.end(); ++next) {
+            next->ForEach([&merged](DAddr start, DAddr end) { merged.Add(start, end - start); });
+        }
+        committed_gpu_modified_ranges.resize(1);
+        async_buffers.emplace_back(std::optional<Async_Buffer>{});
+        return;
+    }
 
     auto it = committed_gpu_modified_ranges.begin();
     while (it != committed_gpu_modified_ranges.end()) {
@@ -1008,6 +1023,7 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
     runtime.PostCopyBarrier();
     pending_downloads.emplace_back(std::move(normalized_copies));
     pending_download_ranges.emplace_back(std::move(download_ranges));
+    async_download_bytes += download_staging.mapped_span.size();
     async_buffers.emplace_back(download_staging);
 }
 
@@ -1047,7 +1063,10 @@ void BufferCache<P>::PopAsyncBuffers() {
             gpu_modified_ranges.Subtract(start, end - start);
         });
     }
-    async_buffers_death_ring.emplace_back(*async_buffer);
+    // Its data is read: free it now rather than at the next frame, which is seconds away when
+    // the GPU is behind. It is reused only once the GPU passes the current tick.
+    async_download_bytes -= async_buffer->mapped_span.size();
+    runtime.FreeDeferredStagingBuffer(*async_buffer);
     async_buffers.pop_front();
     pending_downloads.pop_front();
     pending_download_ranges.pop_front();
