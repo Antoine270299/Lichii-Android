@@ -24,7 +24,6 @@
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "common/literals.h"
-#include "common/memory_detect.h"
 #include <ranges>
 #include "common/settings.h"
 #include "common/settings_enums.h"
@@ -1840,14 +1839,6 @@ void Device::CollectPhysicalMemoryInfo() {
         const s64 available_memory = static_cast<s64>(device_access_memory - device_initial_usage);
         const u64 memory_size = Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive ? 6_GiB : 4_GiB;
         device_access_memory = static_cast<u64>(std::max<s64>(std::min<s64>(available_memory - 8_GiB, memory_size), std::min<s64>(local_memory, memory_size)));
-#ifdef __ANDROID__
-        // A phone shares its RAM with Android and the background apps too: on a 12 GB phone a
-        // Switch 2 title keeps ~5 GB of guest and process memory, Android leaves it ~5 GB, and a
-        // texture cache growing to the 4 GiB share filled RAM and swap within 20 s of Ocarina of
-        // Time's gameplay (killed by the low memory killer). Give the GPU a sixth of the RAM.
-        const u64 physical_share = Common::GetMemInfo().TotalPhysicalMemory / 6;
-        device_access_memory = (std::min)(device_access_memory, (std::max)(physical_share, u64{1_GiB}));
-#endif
     } else {
         const u64 reserve_memory = std::min<u64>(device_access_memory / 8, 1_GiB);
         device_access_memory -= reserve_memory;
