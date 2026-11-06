@@ -274,6 +274,9 @@ public:
     /// sensible, false otherwise, addr and size must be a valid combination
     bool OnCPUWrite(DAddr addr, u64 size);
 
+    /// Whether the buffer cache holds GPU-written data in this range that guest memory lacks.
+    [[nodiscard]] bool HasGpuWrittenBuffers(DAddr addr, u64 size);
+
     /// Notify rasterizer that any caches of the specified region should be flushed and invalidated
     void FlushAndInvalidateRegion(DAddr addr, u64 size);
 

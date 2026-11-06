@@ -989,6 +989,31 @@ struct Memory::Impl {
             p, scratch_buffers[core], [&](DAddr address) { gpu.InvalidateRegion(address, size, true); });
     }
 
+    bool HasGpuWrittenData(u8* p, size_t size) {
+        constexpr size_t sys_core = Core::Hardware::NUM_CPU_CORES - 1;
+        const size_t core = (std::min)(system.GetCurrentHostThreadID(), sys_core);
+        if (!gpu_device_memory) [[unlikely]] {
+            gpu_device_memory = &system.Host1x().MemoryManager();
+        }
+        if (!gpu_device_memory->IsPhysicalPointer(p)) [[unlikely]] {
+            return false;
+        }
+        if (core == sys_core) [[unlikely]] {
+            sys_core_guard.lock();
+        }
+        SCOPE_EXIT {
+            if (core == sys_core) [[unlikely]] {
+                sys_core_guard.unlock();
+            }
+        };
+        bool written = false;
+        auto& gpu = system.GPU();
+        gpu_device_memory->ApplyOpOnPointer(p, scratch_buffers[core], [&](DAddr address) {
+            written = written || gpu.HasGpuWrittenBuffers(address, size);
+        });
+        return written;
+    }
+
     Core::System& system;
     Tegra::MaxwellDeviceMemoryManager* gpu_device_memory{};
     Common::PageTable* current_page_table = nullptr;
@@ -1226,6 +1251,13 @@ bool Memory::InvalidateNCE(Common::ProcessAddress vaddr, size_t size) {
 #endif
 
     return mapped && ptr != nullptr;
+}
+
+bool Memory::HasGpuWrittenDataNCE(Common::ProcessAddress vaddr, size_t size) {
+    bool rasterizer = false;
+    u8* const ptr = impl->GetPointerImpl(
+        GetInteger(vaddr), [] {}, [&] { rasterizer = true; });
+    return rasterizer && ptr != nullptr && impl->HasGpuWrittenData(ptr, size);
 }
 
 bool Memory::InvalidateSeparateHeap(void* fault_address) {

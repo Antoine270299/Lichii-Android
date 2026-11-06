@@ -4,9 +4,12 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <memory>
 
+#include "common/logging.h"
 #include "common/signal_chain.h"
 #include "core/arm/nce/arm_nce.h"
 #include "core/arm/nce/interpreter_visitor.h"
@@ -39,6 +42,77 @@ fpsimd_context* GetFloatingPointState(mcontext_t& host_ctx) {
         header = reinterpret_cast<_aarch64_ctx*>(reinterpret_cast<char*>(header) + header->size);
     }
     return reinterpret_cast<fpsimd_context*>(header);
+}
+
+#ifndef ESR_MAGIC
+#define ESR_MAGIC 0x45535201
+struct esr_context {
+    struct _aarch64_ctx head;
+    __u64 esr;
+};
+#endif
+
+// Whether the data abort that raised this signal was a write (ESR_EL1.WnR).
+bool IsWriteFault(mcontext_t& host_ctx) {
+    auto* header = reinterpret_cast<_aarch64_ctx*>(&host_ctx.__reserved);
+    while (header->magic != 0 && header->size != 0) {
+        if (header->magic == ESR_MAGIC) {
+            const u64 esr = reinterpret_cast<esr_context*>(header)->esr;
+            const u64 exception_class = (esr >> 26) & 0x3f;
+            constexpr u64 DataAbortLowerEl = 0x24;
+            constexpr u64 DataAbortSameEl = 0x25;
+            return (exception_class == DataAbortLowerEl || exception_class == DataAbortSameEl) &&
+                   (esr & (u64{1} << 6)) != 0;
+        }
+        header = reinterpret_cast<_aarch64_ctx*>(reinterpret_cast<char*>(header) + header->size);
+    }
+    return false;
+}
+
+// A store to a page that holds GPU-written buffer data. Handing the page back to the CPU
+// downloads that data and waits for the host GPU, ~1 ms each time: Ocarina of Time writes small
+// structures next to GPU data a few hundred times a second, which kept the GPU thread waiting
+// ~70% of the time. Running the store here sends it to the buffer cache as a write of a desktop
+// build does (collected for the GPU thread) and leaves the page with the GPU. A run of stores to
+// one page, such as a copy loop, still hands the page back.
+bool RunStoreToGpuPage(Core::Memory::Memory& memory, mcontext_t& host_ctx, u64 page) {
+    if (!IsWriteFault(host_ctx)) {
+        return false;
+    }
+    struct Run {
+        u64 page = ~u64{0};
+        u32 stores = 0;
+        std::chrono::steady_clock::time_point last;
+    };
+    thread_local Run run;
+    const auto now = std::chrono::steady_clock::now();
+    if (run.page != page || now - run.last > std::chrono::microseconds{200}) {
+        run.page = page;
+        run.stores = 0;
+    }
+    run.last = now;
+    if (++run.stores > 32) {
+        run.page = ~u64{0};
+        return false;
+    }
+    if (!memory.HasGpuWrittenDataNCE(page, Memory::YUZU_PAGESIZE)) {
+        return false;
+    }
+    const auto next_pc = MatchAndExecuteOneInstruction(memory, &host_ctx,
+                                                       GetFloatingPointState(host_ctx));
+    static std::atomic<u64> stores_run{};
+    static std::atomic<u64> stores_unhandled{};
+    if (!next_pc) {
+        stores_unhandled.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (const u64 count = stores_run.fetch_add(1, std::memory_order_relaxed) + 1;
+        (count & 0x3fff) == 0) {
+        LOG_INFO(Core_ARM, "NCE: {} stores to GPU-written pages run in place, {} not decodable",
+                 count, stores_unhandled.load(std::memory_order_relaxed));
+    }
+    host_ctx.pc = *next_pc;
+    return true;
 }
 
 using namespace Common::Literals;
@@ -165,6 +239,10 @@ bool ArmNce::HandleGuestAccessFault(GuestContext* guest_ctx, void* raw_info, voi
     const Common::ProcessAddress addr =
         (reinterpret_cast<u64>(info->si_addr) & ~Memory::YUZU_PAGEMASK);
     auto& memory = guest_ctx->parent->m_running_thread->GetOwnerProcess()->GetMemory();
+    if (RunStoreToGpuPage(memory, static_cast<ucontext_t*>(raw_context)->uc_mcontext,
+                          GetInteger(addr))) {
+        return true;
+    }
     if (memory.InvalidateNCE(addr, Memory::YUZU_PAGESIZE)) {
         // We handled the access successfully and are returning to guest code.
         return true;

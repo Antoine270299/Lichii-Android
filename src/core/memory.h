@@ -506,6 +506,9 @@ public:
 
     bool InvalidateNCE(Common::ProcessAddress vaddr, size_t size);
 
+    /// Whether a GPU-cached page holds GPU-written buffer data guest memory lacks (NCE faults).
+    bool HasGpuWrittenDataNCE(Common::ProcessAddress vaddr, size_t size);
+
     bool InvalidateSeparateHeap(void* fault_address);
 
 private:

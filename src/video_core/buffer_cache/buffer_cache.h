@@ -268,6 +268,16 @@ bool BufferCache<P>::OnCPUWrite(DAddr device_addr, u64 size) {
     if (memory_tracker.IsRegionGpuModified(device_addr, size)) {
         return true;
     }
+    // GPU-written bytes elsewhere on the pages: only the scheduler's owner keeps them (it uploads
+    // or downloads), WriteMemory elsewhere marks the whole pages CPU-modified and loses them.
+    // Collected, the write reaches WriteMemory on the GPU thread.
+    if (!VideoCommon::GpuSplit::OwnsScheduler()) {
+        const DAddr page_begin = Common::AlignDown(device_addr, DEVICE_PAGESIZE);
+        const DAddr page_end = Common::AlignUp(device_addr + size, DEVICE_PAGESIZE);
+        if (gpu_modified_ranges.Intersects(page_begin, page_end - page_begin)) {
+            return true;
+        }
+    }
     WriteMemory(device_addr, size);
     return false;
 }
