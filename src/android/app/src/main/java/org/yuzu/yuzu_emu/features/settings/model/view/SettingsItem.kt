@@ -772,6 +772,15 @@ abstract class SettingsItem(
                 )
             )
             put(
+                SingleChoiceSetting(
+                    IntSetting.FRAMES_AHEAD,
+                    titleId = R.string.frames_ahead,
+                    descriptionId = R.string.frames_ahead_description,
+                    choicesId = R.array.framesAheadNames,
+                    valuesId = R.array.framesAheadValues
+                )
+            )
+            put(
                 SwitchSetting(
                     BooleanSetting.RENDERER_ASYNCHRONOUS_SHADERS,
                     titleId = R.string.renderer_asynchronous_shaders,

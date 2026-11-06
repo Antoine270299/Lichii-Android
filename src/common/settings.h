@@ -548,6 +548,18 @@ struct Values {
                                                                  true,
                                                                  true};
 
+    // Whether a Switch 2 title's presents wait for the previous frame's GPU work (On) instead of
+    // the frame's own (Off). Auto: per title, as tested (nx2_gsv).
+    SwitchableSetting<FramesAhead, true> frames_ahead{linkage,
+                                                      FramesAhead::Auto,
+                                                      FramesAhead::Auto,
+                                                      FramesAhead::On,
+                                                      "frames_ahead",
+                                                      Category::RendererAdvanced,
+                                                      Specialization::Default,
+                                                      true,
+                                                      true};
+
     SwitchableSetting<VramUsageMode, true> vram_usage_mode{linkage,
                                                            VramUsageMode::Conservative,
                                                            "vram_usage_mode",

@@ -1750,11 +1750,25 @@ private:
         // only after this present returns: while a channel stays suspended on one, wait for the
         // previous frame's fence instead and let the game prepare frame N+1 meanwhile (waiting
         // for this frame there cost 8-56 ms of every 34-105 ms frame, or never finished).
-        // EDEN_NX2_FRAMES_AHEAD=1 always waits for the previous frame, =0 always for this one.
-        static const int frames_ahead_setting = [] {
+        // The frames_ahead setting On always waits for the previous frame, Off always for this
+        // one, Auto decides per title below. EDEN_NX2_FRAMES_AHEAD=1/0 overrides the setting.
+        static const int frames_ahead_env = [] {
             const char* value = std::getenv("EDEN_NX2_FRAMES_AHEAD");
             return value == nullptr ? -1 : value[0] == '1' ? 1 : 0;
         }();
+        int frames_ahead_setting = frames_ahead_env;
+        if (frames_ahead_setting == -1) {
+            switch (Settings::values.frames_ahead.GetValue()) {
+            case Settings::FramesAhead::Off:
+                frames_ahead_setting = 0;
+                break;
+            case Settings::FramesAhead::On:
+                frames_ahead_setting = 1;
+                break;
+            default:
+                break;
+            }
+        }
         // Donkey Kong Bananza's channels wait on each other every frame, so it always ran a frame
         // ahead, where it rewrote memory the GPU thread hadn't read yet (misread commands, then
         // a freeze or crash; rubberbanding while moving). Title 1 runs ahead without either.

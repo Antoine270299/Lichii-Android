@@ -557,6 +557,17 @@
         <item>2</item>
     </integer-array>
 
+    <string-array name="framesAheadNames">
+        <item>@string/frames_ahead_auto</item>
+        <item>@string/frames_ahead_off</item>
+        <item>@string/frames_ahead_on</item>
+    </string-array>
+    <integer-array name="framesAheadValues">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
+
     <string-array name="gpuFenceBehaviorNames">
         <item>@string/gpu_fence_behavior_default</item>
         <item>@string/gpu_fence_behavior_immediate</item>

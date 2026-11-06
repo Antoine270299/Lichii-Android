@@ -540,6 +540,7 @@ class SettingsFragmentPresenter(
             add(IntSetting.RENDERER_ACCURACY.key)
             add(IntSetting.DMA_ACCURACY.key)
             add(IntSetting.GPU_FENCE_BEHAVIOR.key)
+            add(IntSetting.FRAMES_AHEAD.key)
             add(IntSetting.MAX_ANISOTROPY.key)
             add(IntSetting.RENDERER_VRAM_USAGE_MODE.key)
             add(IntSetting.RENDERER_ASTC_DECODE_METHOD.key)

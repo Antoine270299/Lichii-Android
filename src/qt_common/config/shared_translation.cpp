@@ -251,6 +251,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Controls the DMA read mode.\nUnsafe is faster, while Safe is more stable and can fix issues in some games.\nDefault follows the GPU Accuracy setting."));
     INSERT(Settings, gpu_fence_behavior, tr("GPU Fence Behavior:"),
            tr("Controls the GPU fence synchronization behavior.\nImmediate is the fastest option, but can introduce some issues.\nBalanced offers better compatibility and may fix issues in some games.\nAccurate further improves compatibility at the cost of some performance.\nDefault follows the GPU Mode setting."));
+    INSERT(Settings, frames_ahead, tr("Present a frame ahead:"),
+           tr("Lets the CPU start the next frame while the GPU finishes the current one.\nRaises "
+              "the frame rate in GPU-heavy games at the cost of one frame of input latency.\nAuto "
+              "picks per game."));
     INSERT(Settings, use_asynchronous_shaders, tr("Enable asynchronous shader compilation"),
            tr("May reduce shader stutter."));
     INSERT(Settings, gpu_clock, tr("GPU Clocks"),
@@ -463,6 +467,12 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(GpuFenceBehavior, Immediate, tr("Immediate")),
                               PAIR(GpuFenceBehavior, Balanced, tr("Balanced")),
                               PAIR(GpuFenceBehavior, Accurate, tr("Accurate")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::FramesAhead>::Index(),
+                          {
+                              PAIR(FramesAhead, Auto, tr("Auto")),
+                              PAIR(FramesAhead, Off, tr("Off")),
+                              PAIR(FramesAhead, On, tr("On")),
                           }});
     translations->insert(
         {Settings::EnumMetadata<Settings::CpuAccuracy>::Index(),

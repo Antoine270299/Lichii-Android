@@ -1141,6 +1141,11 @@
     <string name="gpu_fence_behavior_immediate">Immediate</string>
     <string name="gpu_fence_behavior_balanced">Balanced</string>
     <string name="gpu_fence_behavior_accurate">Accurate</string>
+    <string name="frames_ahead">Present a frame ahead</string>
+    <string name="frames_ahead_description">Switch 2 games: lets the game prepare the next frame while the GPU still draws the current one. Usually faster; a few games misbehave with it on. Auto picks per game as tested.</string>
+    <string name="frames_ahead_auto">Auto</string>
+    <string name="frames_ahead_off">Off</string>
+    <string name="frames_ahead_on">On</string>
 
     <!-- ASTC Decoding Method Choices -->
     <string name="accelerate_astc_cpu" translatable="false">CPU</string>
