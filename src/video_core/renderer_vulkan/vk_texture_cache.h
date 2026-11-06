@@ -298,14 +298,6 @@ public:
         u32 levels;
         u32 layers;
         u32 unused_frames;
-
-        [[nodiscard]] u64 DecodeBytes() const noexcept {
-            u64 bytes{};
-            for (u32 level = 0; level < levels; ++level) {
-                bytes += u64{(std::max)(width >> level, 1U)} * (std::max)(height >> level, 1U) * 4;
-            }
-            return bytes * layers;
-        }
     };
     std::deque<PendingTranscode> pending_transcodes;
     /// Decode images the GPU is done with, for the next texture of the same shape.
