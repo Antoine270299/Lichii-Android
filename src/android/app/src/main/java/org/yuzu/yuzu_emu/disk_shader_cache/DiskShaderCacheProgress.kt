@@ -7,20 +7,12 @@ import androidx.annotation.Keep
 import androidx.lifecycle.ViewModelProvider
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
-import org.yuzu.yuzu_emu.activities.EmulationActivity
 import org.yuzu.yuzu_emu.model.EmulationViewModel
 import org.yuzu.yuzu_emu.utils.Log
 
 @Keep
 object DiskShaderCacheProgress {
-    private lateinit var emulationViewModel: EmulationViewModel
-
-    private fun prepareViewModel() {
-        emulationViewModel =
-            ViewModelProvider(
-                NativeLibrary.sEmulationActivity.get() as EmulationActivity
-            )[EmulationViewModel::class.java]
-    }
+    private var emulationViewModel: EmulationViewModel? = null
 
     @JvmStatic
     fun loadProgress(stage: Int, progress: Int, max: Int) {
@@ -31,9 +23,15 @@ object DiskShaderCacheProgress {
         }
 
         emulationActivity.runOnUiThread {
+            // Leaving the game can close the activity before this runs (the weak reference is
+            // empty by then, which crashed the app): use the activity captured above, if alive.
+            if (emulationActivity.isFinishing || emulationActivity.isDestroyed) {
+                return@runOnUiThread
+            }
             when (LoadCallbackStage.values()[stage]) {
-                LoadCallbackStage.Prepare -> prepareViewModel()
-                LoadCallbackStage.Build -> emulationViewModel.updateProgress(
+                LoadCallbackStage.Prepare -> emulationViewModel =
+                    ViewModelProvider(emulationActivity)[EmulationViewModel::class.java]
+                LoadCallbackStage.Build -> emulationViewModel?.updateProgress(
                     emulationActivity.getString(R.string.building_shaders),
                     progress,
                     max
