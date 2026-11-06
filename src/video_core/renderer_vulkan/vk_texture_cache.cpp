@@ -2847,13 +2847,7 @@ void TextureCacheRuntime::TickFrame() {
     static constexpr u32 MAX_UNUSED_SCRATCH_FRAMES = 60;
     // Finished decode images wait for the next texture of their shape, up to this much memory.
     static constexpr u64 MaxFreeTranscodeBytes = u64{256} << 20;
-    const auto decode_bytes = [](const PendingTranscode& t) {
-        u64 bytes{};
-        for (u32 level = 0; level < t.levels; ++level) {
-            bytes += u64{(std::max)(t.width >> level, 1U)} * (std::max)(t.height >> level, 1U) * 4;
-        }
-        return bytes * t.layers;
-    };
+    const auto decode_bytes = [](const PendingTranscode& t) { return t.DecodeBytes(); };
     u64 free_bytes{};
     for (const PendingTranscode& t : free_transcodes) {
         free_bytes += decode_bytes(t);
@@ -4931,14 +4925,42 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     // A decode image of the same shape the GPU is done with: title 1's title screen decodes
     // dozens of textures a frame, mostly of a few shapes. Making one took 263 us; from VMA's
     // shared blocks 90 us, but freeing them there left ~1 GB of those blocks unused.
-    const auto reusable = std::ranges::find_if(free_transcodes, [&](const PendingTranscode& t) {
+    const auto same_shape = [&](const PendingTranscode& t) {
         return t.width == width && t.height == height && t.levels == levels && t.layers == layers;
-    });
+    };
+    // Decode images used to come back for reuse only once a frame (TickFrame): each texture of a
+    // scene's first frame (hundreds in Ocarina of Time, a frame of seconds on a phone) made one,
+    // all alive at once. One of this shape still in use is reused too: the decode waits for the
+    // earlier encode on the GPU (it then starts from a GENERAL image, after all earlier compute
+    // work). Past InFlightTranscodeBytes, new ones wait for the oldest to finish.
+    bool reused_in_flight = false;
     PendingTranscode pending;
-    if (reusable != free_transcodes.end()) {
+    if (const auto reusable = std::ranges::find_if(free_transcodes, same_shape);
+        reusable != free_transcodes.end()) {
         pending = std::move(*reusable);
         free_transcodes.erase(reusable);
+    } else if (const auto in_flight = std::ranges::find_if(pending_transcodes, same_shape);
+               in_flight != pending_transcodes.end()) {
+        pending = std::move(*in_flight);
+        pending_transcodes.erase(in_flight);
+        reused_in_flight = true;
     } else {
+        static constexpr u64 InFlightTranscodeBytes = u64{384} << 20;
+        const u64 needed = PendingTranscode{.width = width, .height = height, .levels = levels,
+                                            .layers = layers}
+                               .DecodeBytes();
+        u64 in_flight_bytes{};
+        for (const PendingTranscode& t : pending_transcodes) {
+            in_flight_bytes += t.DecodeBytes();
+        }
+        while (!pending_transcodes.empty() && in_flight_bytes + needed > InFlightTranscodeBytes) {
+            if (const u64 oldest_tick = pending_transcodes.front().tick;
+                !scheduler.IsFree(oldest_tick)) {
+                scheduler.Wait(oldest_tick);
+            }
+            in_flight_bytes -= pending_transcodes.front().DecodeBytes();
+            pending_transcodes.pop_front();
+        }
         pending = PendingTranscode{
             .tick = 0,
             .image = memory_allocator.CreateImage(VkImageCreateInfo{
@@ -4975,7 +4997,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
         ASTCDecoderPass::Target{
             .image = *pending.image,
             .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .initialized = false,
+            .initialized = reused_in_flight,
             .level_view = [&pending](s32 level) { return *pending.views[level]; },
             .wait = true,
         },
