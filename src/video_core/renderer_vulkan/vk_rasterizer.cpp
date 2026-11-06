@@ -449,6 +449,21 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         TraceRenderState(is_indexed, "mesh-skipped", nullptr);
         return;
     }
+    // Skipped before anything is recorded for them, as EDEN_NX2_NO_MESH does: that geometry is
+    // missing, the game keeps running. Ocarina of Time's task/mesh draws stalled the GPU on
+    // Xclipse right after its intro. Other games keep their mesh draws.
+    static constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
+    if (mesh_draw && device.HasHangingMeshDraws() &&
+        Settings::GetCurrentProgramID() == OcarinaOfTime) {
+        static bool logged{};
+        if (!std::exchange(logged, true)) {
+            LOG_WARNING(Render_Vulkan, "Ocarina of Time task/mesh draws are skipped on {}",
+                        device.GetModelName());
+        }
+        report_failure("mesh draws stall this GPU");
+        TraceRenderState(is_indexed, "mesh-skipped", nullptr);
+        return;
+    }
     std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
     // update engine as channel may be different.
     pipeline->SetEngine(maxwell3d, gpu_memory);

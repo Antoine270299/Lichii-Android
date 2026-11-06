@@ -675,6 +675,19 @@ FN_MAX_LIMIT_LIST
         return properties.properties.limits.maxTessellationPatchSize;
     }
 
+    /// Samsung Xclipse GPUs (RADV "JUNO", or Samsung's own RADV-based driver).
+    bool IsXclipse() const {
+        const std::string_view name = GetModelName();
+        return name.find("Xclipse") != std::string_view::npos ||
+               name.find("RADV JUNO") != std::string_view::npos;
+    }
+
+    /// Ocarina of Time's task/mesh draws stall the GPU inside Lichii's command stream, though the
+    /// same draw on its own runs.
+    bool HasHangingMeshDraws() const {
+        return IsXclipse();
+    }
+
     /// Returns true if the device supports task and mesh shaders (VK_EXT_mesh_shader).
     bool IsExtMeshShaderSupported() const {
         return extensions.mesh_shader && features.mesh_shader.taskShader &&
