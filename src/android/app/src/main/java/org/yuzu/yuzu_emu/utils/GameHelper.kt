@@ -8,13 +8,18 @@ package org.yuzu.yuzu_emu.utils
 
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.DocumentsContract
 import androidx.preference.PreferenceManager
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.YuzuApplication
+import org.yuzu.yuzu_emu.model.DirectoryType
 import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.GameDir
 import org.yuzu.yuzu_emu.model.MinimalDocumentFile
@@ -69,6 +74,7 @@ object GameHelper {
                     scanDepth,
                     mountedContainerUris
                 )
+                addLibraryExeFSGames(games, gameDir)
             } else {
                 badDirs.add(index)
             }
@@ -96,6 +102,24 @@ object GameHelper {
 
         cachedGameList = games.toMutableList()
         return games.toList()
+    }
+
+    private fun addLibraryExeFSGames(games: MutableList<Game>, gameDir: GameDir) {
+        findLibraryExeFSGames(gameDir).forEach { game ->
+            val duplicate = games.any {
+                it.path == game.path ||
+                    (game.programId.isNotEmpty() && it.programId == game.programId)
+            }
+            if (duplicate) {
+                return@forEach
+            }
+            games.add(game)
+            if (preferences.getLong(game.keyAddedToLibraryTime, 0L) == 0L) {
+                preferences.edit {
+                    putLong(game.keyAddedToLibraryTime, System.currentTimeMillis())
+                }
+            }
+        }
     }
 
     fun restoreContentForGame(game: Game) {
@@ -253,6 +277,222 @@ object GameHelper {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private const val EXEFS_SEARCH_DEPTH = 4
+    private const val NPDM_MAX_SIZE = 1024 * 1024
+    private const val NPDM_MAGIC = 0x4154454D // "META"
+    private const val ACI0_MAGIC = 0x30494341 // "ACI0"
+    private val exeFSSkippedDirs = setOf("romfs", "dlc")
+    private val exeFSNonTitleDirs = setOf("exefs", "base", "updates", "update")
+    private val exeFSStorageLevels = setOf("base", "update", "updates")
+
+    // Loose ExeFS titles (Switch 2) boot from exefs/main by real path. Accepts the game folder
+    // (containing exefs/) or the exefs folder itself.
+    fun getExeFSGame(folder: File): Game? = findExeFSGames(folder).firstOrNull()
+
+    // Searches a picked folder for exefs/main candidates, newest numbered update first.
+    fun findExeFSGames(folder: File, maxDepth: Int = EXEFS_SEARCH_DEPTH): List<Game> {
+        val mains = mutableListOf<File>()
+
+        // Check if folder itself is an exefs folder
+        File(folder, "main").takeIf { it.isFile }?.let { mains.add(it) }
+
+        // Check direct child folders
+        val exefsFolder = File(folder, "exefs")
+        if (exefsFolder.isDirectory) {
+            File(exefsFolder, "main").takeIf { it.isFile }?.let { mains.add(it) }
+        }
+
+        // Check base/exefs/main layout
+        val baseExefsFolder = File(folder, "base/exefs")
+        if (baseExefsFolder.isDirectory) {
+            File(baseExefsFolder, "main").takeIf { it.isFile }?.let { mains.add(it) }
+        }
+
+        // Recursively search subdirectories
+        collectExeFSMains(folder, 0, maxDepth, mains)
+
+        return mains.distinctBy { it.absolutePath }
+            .sortedWith(
+                compareByDescending<File> { exeFSVersion(it) }
+                    .thenBy { it.parentFile?.relativeTo(folder)?.path ?: "" }
+            )
+            .map {
+                Game(
+                    title = exeFSTitle(it, folder),
+                    path = it.absolutePath,
+                    programId = exeFSProgramId(it)
+                )
+            }
+    }
+
+    // Loose ExeFS games need real paths, which only all files access can read.
+    fun hasAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+
+    // One library entry per loose ExeFS game in a game folder: its newest update, else base.
+    fun findLibraryExeFSGames(gameDir: GameDir): List<Game> {
+        if (gameDir.type != DirectoryType.GAME || !hasAllFilesAccess()) {
+            return emptyList()
+        }
+        val path = PathUtil.getPathFromUri(gameDir.uriString.toUri()) ?: return emptyList()
+        val folder = File(path)
+        if (!folder.exists() || !folder.isDirectory) {
+            return emptyList()
+        }
+        val maxDepth = if (gameDir.deepScan) EXEFS_SEARCH_DEPTH + 2 else EXEFS_SEARCH_DEPTH
+        return findExeFSGames(folder, maxDepth).distinctBy {
+            if (it.programId.isEmpty()) it.title else it.programId
+        }
+    }
+
+    private fun collectExeFSMains(dir: File, depth: Int, maxDepth: Int, mains: MutableList<File>) {
+        if (depth >= maxDepth) {
+            return
+        }
+        val children = dir.listFiles() ?: return
+        for (child in children) {
+            if (!child.isDirectory || isSymlink(child)) {
+                continue
+            }
+            val name = child.name.lowercase()
+            if (name in exeFSSkippedDirs && depth > 0) {
+                continue
+            }
+            if (name == "exefs") {
+                File(child, "main").takeIf { it.isFile }?.let { mains.add(it) }
+                // Also scan inside exefs for update folders
+                collectExeFSMains(child, depth + 1, maxDepth, mains)
+                continue
+            }
+            collectExeFSMains(child, depth + 1, maxDepth, mains)
+        }
+    }
+
+    private fun isSymlink(file: File): Boolean {
+        return try {
+            val parent = file.parentFile?.canonicalFile ?: return false
+            val resolved = File(parent, file.name)
+            resolved.canonicalFile != resolved.absoluteFile
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    // Title ID from the ACI0 section of exefs/main.npdm, as a decimal string like GameMetadata.
+    private fun exeFSProgramId(main: File): String {
+        val npdm = File(main.parentFile, "main.npdm")
+        return try {
+            if (!npdm.isFile || npdm.length() > NPDM_MAX_SIZE) {
+                return ""
+            }
+            val buffer = ByteBuffer.wrap(npdm.readBytes()).order(ByteOrder.LITTLE_ENDIAN)
+            if (buffer.limit() < 0x80 || buffer.getInt(0) != NPDM_MAGIC) {
+                return ""
+            }
+            val aciOffset = buffer.getInt(0x70)
+            if (aciOffset < 0 || aciOffset + 0x18 > buffer.limit() ||
+                buffer.getInt(aciOffset) != ACI0_MAGIC
+            ) {
+                return ""
+            }
+            val programId = buffer.getLong(aciOffset + 0x10)
+            if (programId == 0L) "" else java.lang.Long.toUnsignedString(programId)
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    private fun exeFSVersion(main: File): Long {
+        var dir = main.parentFile ?: return -1
+        if (dir.name.equals("exefs", true)) {
+            dir = dir.parentFile ?: return -1
+        }
+        return dir.name.toLongOrNull() ?: -1
+    }
+
+    // Find RomFS for a loose ExeFS dump: the first .romfs file next to main,
+    // else a romfs/ directory next to the exefs/ directory
+    private fun findLooseRomFS(mainFile: File): File? {
+        val exefsDir = mainFile.parentFile ?: return null
+
+        // Check for .romfs files in exefs directory
+        exefsDir.listFiles()?.forEach { file ->
+            if (file.isFile && file.extension.equals("romfs", ignoreCase = true)) {
+                return file
+            }
+        }
+
+        // Check for romfs/ directory next to exefs/
+        val parentDir = exefsDir.parentFile ?: return null
+        val romfsDir = File(parentDir, "romfs")
+        if (romfsDir.isDirectory) {
+            return romfsDir
+        }
+
+        return null
+    }
+
+    // Calculate total size of a loose dump (exefs + romfs)
+    private fun calculateLooseDumpSize(mainFile: File): Long {
+        val exefsDir = mainFile.parentFile ?: return mainFile.length()
+        var totalSize = 0L
+
+        // Sum exefs directory
+        exefsDir.walkTopDown().forEach { file ->
+            if (file.isFile) {
+                totalSize += file.length()
+            }
+        }
+
+        // Add romfs if present
+        findLooseRomFS(mainFile)?.let { romfs ->
+            if (romfs.isDirectory) {
+                romfs.walkTopDown().forEach { file ->
+                    if (file.isFile) {
+                        totalSize += file.length()
+                    }
+                }
+            } else {
+                totalSize += romfs.length()
+            }
+        }
+
+        return totalSize
+    }
+
+    private fun exeFSTitle(main: File, folder: File): String {
+        var dir = main.parentFile
+        var isUpdate = false
+
+        // Skip storage levels (base, update, updates, hex IDs)
+        while (dir != null && dir != folder) {
+            val name = dir.name
+            val nameLower = name.lowercase()
+
+            // Check if this is an update indicator
+            if (nameLower in setOf("update", "updates")) {
+                isUpdate = true
+            }
+
+            // Check if it's a storage level (base, update, or hex ID)
+            val isStorageLevel = nameLower in exeFSStorageLevels ||
+                name.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
+
+            if (!isStorageLevel && nameLower !in exeFSNonTitleDirs) {
+                val title = if (isUpdate && !name.contains("update", ignoreCase = true)) {
+                    "$name (update)"
+                } else {
+                    name
+                }
+                return title
+            }
+
+            dir = dir.parentFile
+        }
+
+        return folder.name
     }
 
     fun getGame(
