@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "common/logging.h"
+#include "common/settings.h"
 #include "common/signal_chain.h"
 #include "core/arm/nce/arm_nce.h"
 #include "core/arm/nce/interpreter_visitor.h"
@@ -75,8 +76,12 @@ bool IsWriteFault(mcontext_t& host_ctx) {
 // ~70% of the time. Running the store here sends it to the buffer cache as a write of a desktop
 // build does (collected for the GPU thread) and leaves the page with the GPU. A run of stores to
 // one page, such as a copy loop, still hands the page back.
+// Ocarina of Time only: Pokemon Pokopia stores to such pages ~20,000 times a second, and each
+// store trapping (and taking the buffer cache lock the GPU thread holds) dropped it from ~40 to
+// ~5 FPS for seconds at a time, where the old path hands a page over once.
 bool RunStoreToGpuPage(Core::Memory::Memory& memory, mcontext_t& host_ctx, u64 page) {
-    if (!IsWriteFault(host_ctx)) {
+    static constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
+    if (Settings::GetCurrentProgramID() != OcarinaOfTime || !IsWriteFault(host_ctx)) {
         return false;
     }
     struct Run {
