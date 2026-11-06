@@ -644,7 +644,11 @@ private:
     /// dispatch, the fencing thread holding the buffer cache while it wrote them), while its CPU
     /// read GPU-written memory at most 64 times in 200 s (counted with reactive flushing) and
     /// the native MME's DMA reads never touched those pages. Without them a fence costs ~1 us
-    /// instead of ~5 and draw setup ~7% less. EDEN_NX2_BUFFER_DOWNLOADS=0/1 forces it.
+    /// instead of ~5 and draw setup ~7% less. Titles whose guest side reads GPU-written buffer
+    /// data through a path the buffer cache does not see still need them (moceure/eden-nx2-android
+    /// a5c06ea209): Pokemon Pokopia's sky is black without, and on Android each of its writes
+    /// next to that data downloaded a page and waited for the GPU (750 times a second).
+    /// EDEN_NX2_BUFFER_DOWNLOADS=0/1 forces it.
     bool AsyncBufferDownloads() const {
         static const int forced = [] {
             const char* value = std::getenv("EDEN_NX2_BUFFER_DOWNLOADS");
@@ -653,7 +657,9 @@ private:
         if (forced >= 0) {
             return forced == 1;
         }
-        return gpu_memory == nullptr || !gpu_memory->UsesNativeTiling();
+        static constexpr u64 PokemonPokopia = 0x0400A3A01EE4C000ULL;
+        return gpu_memory == nullptr || !gpu_memory->UsesNativeTiling() ||
+               Settings::GetCurrentProgramID() == PokemonPokopia;
     }
 
     /// Whether a GPU write to this range is copied back at the next fence. Ranges the guest CPU
