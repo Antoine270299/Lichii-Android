@@ -237,6 +237,28 @@ Result SysmixOutput::SetGain(f32 gain, s64 ramp_ns) {
     R_SUCCEED();
 }
 
+// Drops up to `frames` queued frames by moving the read index past them.
+Result SysmixOutput::Purge(s32 frames, u32& purged) {
+    auto& p = *impl;
+    std::scoped_lock lock{p.mutex};
+    purged = 0;
+    R_UNLESS(frames >= 0, ResultInvalidArgument);
+    R_SUCCEED_IF(!p.open);
+    R_UNLESS(!p.faulted, ResultOperationFailed);
+    u32 read{}, write{}, filled{};
+    R_UNLESS(p.ReadOccupancy(read, write, filled), p.Fault());
+    const u32 taken = std::min(filled, static_cast<u32>(frames));
+    if (taken) {
+        const u32 next = (read + taken) % p.slots;
+        R_UNLESS(p.process->GetMemory().WriteExclusive32(p.buffer + ReadOffset, next, read),
+                 p.Fault());
+        p.consumer = next;
+    }
+    purged = taken;
+    p.Notify(filled - taken);
+    R_SUCCEED();
+}
+
 f32 SysmixOutput::GetGain() const {
     std::scoped_lock lock{impl->mutex};
     return impl->gain;

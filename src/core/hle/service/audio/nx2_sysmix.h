@@ -43,6 +43,7 @@ public:
     Result SetEngaged(bool engaged);
     Result SetDataNotification(u32 mode, s32 threshold);
     Result SetGain(f32 gain, s64 ramp_ns);
+    Result Purge(s32 frames, u32& purged);
     f32 GetGain() const;
     u32 GetState() const;
     void Pump();

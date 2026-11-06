@@ -265,7 +265,7 @@ public:
             {8, &INx2SysmixStreamSession::ReleaseDataEvent, "ReleaseStreamDataEvent"},
             {9, &INx2SysmixStreamSession::Unsupported, "ClockStream"},
             {10, &INx2SysmixStreamSession::Unsupported, "PrimeStream"},
-            {11, &INx2SysmixStreamSession::Unsupported, "PurgeStream"},
+            {11, &INx2SysmixStreamSession::PurgeStream, "PurgeStream"},
             {12, &INx2SysmixStreamSession::Succeed, "RenameStream"},
         };
         RegisterHandlers(functions);
@@ -350,7 +350,20 @@ private:
         rb.Push(result);
     }
 
+    void PurgeStream(HLERequestContext& ctx) {
+        IPC::RequestParser rp{ctx};
+        const auto frames = rp.Pop<s32>();
+        u32 purged{};
+        const auto result = stream->Purge(frames, purged);
+        LOG_INFO(Service_Audio, "stream {} purge {} frames: purged {}, result {:#x}", id, frames,
+                 purged, result.raw);
+        IPC::ResponseBuilder rb{ctx, 3};
+        rb.Push(result);
+        rb.Push(purged);
+    }
+
     void Unsupported(HLERequestContext& ctx) {
+        LOG_WARNING(Service_Audio, "stream {} command {} is not supported", id, ctx.GetCommand());
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(ResultNotSupported);
     }
