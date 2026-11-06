@@ -15,4 +15,4 @@ First Android release of this fork, tested on a Samsung Galaxy S26 (Exynos 2600,
 - Install the APK, add your games folder, and set up keys and firmware as usual. None are included.
 - Recommended: Handheld mode, NCE CPU backend, 1× resolution, and a custom RADV driver on Xclipse GPUs.
 - Diagnostic switches can be set in `Android/data/dev.lichii.android/files/env.txt` (see the README).
-- Report problems at https://github.com/pavelgajdo/Lichii/issues with your phone, driver and `eden_log.txt`.
+- Report problems at https://github.com/pavelgajdo/Lichii-Android/issues with your phone, driver and `eden_log.txt`.

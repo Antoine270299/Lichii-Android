@@ -18,7 +18,7 @@ This is an independent, experimental fork. It is not affiliated with Nintendo or
 
 ## Download
 
-- **Releases:** [github.com/pavelgajdo/Lichii/releases](https://github.com/pavelgajdo/Lichii/releases). Download the `.apk` from the latest `android-*` release and install it on your phone. You may need to allow installs from your browser or file manager.
+- **Releases:** [github.com/pavelgajdo/Lichii-Android/releases](https://github.com/pavelgajdo/Lichii-Android/releases). Download the `.apk` from the latest `android-*` release and install it on your phone. You may need to allow installs from your browser or file manager.
 - **Test builds:** the `android-latest` pre-release is rebuilt automatically from every change on `nx2`. It has the newest fixes and the newest bugs.
 
 Requirements: an arm64 phone with Android 13 or newer and Vulkan 1.3. Games, keys and firmware are not included. Only use games and system files you have legally obtained.
@@ -63,7 +63,7 @@ Only results tested on the phone above are listed here.
 
 ## Reporting problems
 
-[Open an issue](https://github.com/pavelgajdo/Lichii/issues) with:
+[Open an issue](https://github.com/pavelgajdo/Lichii-Android/issues) with:
 
 - your phone model, Android version and GPU driver;
 - the game and what happened (screenshots help);
