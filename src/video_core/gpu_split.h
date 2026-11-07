@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -173,6 +174,49 @@ public:
     void NoteWriter() {
         last_writer_position = write_position;
     }
+    /// Work that writes the device range [begin, begin + size) of guest memory on the back was
+    /// just sent (a 3D report, an inline upload). For macro DMA read snapshots.
+    void NoteMemoryWrite(u64 begin, u64 size) {
+        last_memory_writer_position = write_position;
+        pending_writes[pending_write_count++ % pending_writes.size()] = {
+            .begin = begin, .end = begin + size, .position = write_position};
+    }
+    /// Memory-writing work whose range the front does not know was just sent (KeplerMemory and
+    /// Fermi2D methods, puller semaphore releases): it ends every snapshot.
+    /// Recorded one past the current position: a write run on the back right away (Run) sends
+    /// nothing, and must still end a snapshot taken at this position.
+    void NoteUnrangedWriter() {
+        last_memory_writer_position = write_position + 1;
+        last_unranged_position = write_position + 1;
+    }
+    /// The ring position of everything sent so far.
+    [[nodiscard]] u64 SentPosition() const {
+        return write_position;
+    }
+    /// Whether work sent after position `since` may write device bytes [begin, begin + size):
+    /// compute or copies (any range), unranged writers, or a noted write overlapping the range.
+    /// Also true when more writes were noted since than are remembered.
+    [[nodiscard]] bool MayBeWrittenSince(u64 since, u64 begin, u64 size) const {
+        if (last_writer_position > since || last_unranged_position > since) {
+            return true;
+        }
+        if (last_memory_writer_position <= since) {
+            return false;
+        }
+        const u64 end = begin + size;
+        const u64 remembered = (std::min<u64>)(pending_write_count, pending_writes.size());
+        for (u64 scanned = 0; scanned < remembered; ++scanned) {
+            const PendingWrite& write =
+                pending_writes[(pending_write_count - 1 - scanned) % pending_writes.size()];
+            if (write.position <= since) {
+                return false;
+            }
+            if (write.begin < end && begin < write.end) {
+                return true;
+            }
+        }
+        return remembered == pending_writes.size();
+    }
     /// Waits until the back executed the compute and copy work sent so far (not what came after).
     /// Returns whether any of it was still queued.
     bool WaitForWriters();
@@ -257,6 +301,15 @@ private:
     // Front side.
     u64 write_position{};
     u64 last_writer_position{};
+    u64 last_memory_writer_position{};
+    u64 last_unranged_position{};
+    struct PendingWrite {
+        u64 begin;
+        u64 end;
+        u64 position;
+    };
+    std::array<PendingWrite, 4096> pending_writes{};
+    u64 pending_write_count{};
     u64 last_sync_position{};
     u64 published_local{};
     u64 consumed_cache{};

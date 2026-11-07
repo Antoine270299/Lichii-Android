@@ -254,6 +254,9 @@ struct GPU::Impl {
             VideoCore::RasterizerInterface* rasterizer = renderer->ReadRasterizer();
             if (!rasterizer->TryCacheInvalidation(addr, size)) {
                 const u64 fence = RequestSyncOperation([rasterizer, addr, size] {
+                    // As a read's flush does: marks the pages Preflushable where the buffer cache
+                    // copies them back at fences, so the next fault here need not wait.
+                    (void)rasterizer->GetFlushArea(addr, size);
                     rasterizer->FlushRegion(addr, size, VideoCommon::CacheType::BufferCache);
                     rasterizer->OnCacheInvalidation(addr, size);
                 });

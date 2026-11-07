@@ -1572,6 +1572,10 @@ void RasterizerVulkan::FlushGpuWrittenCommandListPages(std::span<const DAddr> pa
     buffer_cache.Nx2FlushListPages(pages);
 }
 
+bool RasterizerVulkan::HasCachedReports(DAddr addr, u64 size) {
+    return query_cache.HasCachedReports(addr, size);
+}
+
 void RasterizerVulkan::FlushRegion(DAddr addr, u64 size, VideoCommon::CacheType which) {
     if (addr == 0 || size == 0) {
         return;

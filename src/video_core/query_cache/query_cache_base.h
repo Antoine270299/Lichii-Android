@@ -91,6 +91,17 @@ public:
         return result;
     }
 
+    /// Whether a report in the region is still listed (pending host results, or written and not
+    /// unregistered yet). Only the cache mutex: callable from the split front.
+    [[nodiscard]] bool HasCachedReports(VAddr addr, size_t size) {
+        bool result = false;
+        IterateCache<false>(addr, size, [&result](QueryLocation) {
+            result = true;
+            return true;
+        });
+        return result;
+    }
+
     void CounterEnable(QueryType counter_type, bool is_enabled);
 
     void CounterReset(QueryType counter_type);

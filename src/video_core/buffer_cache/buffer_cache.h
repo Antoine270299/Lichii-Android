@@ -9,6 +9,10 @@
 #include "video_core/buffer_cache/uniform_cache_history.h"
 
 #include <algorithm>
+#ifdef __ANDROID__
+#include <dlfcn.h>
+#include <unwind.h>
+#endif
 #include <atomic>
 #include <memory>
 #include <numeric>
@@ -292,14 +296,24 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
     area->start_address = device_addr_start_aligned;
     area->end_address = device_addr_end_aligned;
     if (memory_tracker.IsRegionPreflushable(device_addr, size)) {
-        area->preemtive = true;
+        // A preflushed region's data reaches guest memory when its fence pops (PopAsyncBuffers
+        // clears gpu_modified_ranges then). A read before that saw stale words (Ocarina of Time's
+        // screen flashed white near the sword boulder on PC, from Frizti's 049f878186): such a
+        // read flushes on demand instead.
+        area->preemtive = !IsRegionGpuModified(device_addr_start_aligned,
+                                               device_addr_end_aligned - device_addr_start_aligned);
         return area;
-    };
+    }
     area->preemtive = !IsRegionGpuModified(device_addr_start_aligned,
                                            device_addr_end_aligned - device_addr_start_aligned);
     // A preflushable mark persists and downloads later GPU writes at every fence. Native titles
-    // instead keep read traps and flush on demand.
-    const bool preflush = !Tegra::g_nx2_ampere.load(std::memory_order_relaxed);
+    // instead keep read traps and flush on demand. Ocarina of Time preflushes: under NCE its CPU
+    // writes and reads of a few GPU-written pages faulted ~500 times a second on a phone, each
+    // waiting for the host GPU; with their writes copied back at fences most faults find the data
+    // already in guest memory (TryCacheInvalidation) and wait for nothing.
+    static constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
+    const bool preflush = !Tegra::g_nx2_ampere.load(std::memory_order_relaxed) ||
+                          Settings::GetCurrentProgramID() == OcarinaOfTime;
     if (!area->preemtive) {
         if (Nx2DownloadTrace::g_enabled) [[unlikely]] {
             Nx2DownloadTrace::Marked(device_addr_start_aligned,
@@ -2746,6 +2760,44 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
     }
 }
 
+// EDEN_NX2_DOWNLOAD_STACKS=1 (Android): every 64th download that waits for the host GPU logs
+// its return addresses as offsets into their libraries, for llvm-symbolizer (32 samples).
+inline void Nx2SampleDownloadStack() {
+#ifdef __ANDROID__
+    static const bool enabled = std::getenv("EDEN_NX2_DOWNLOAD_STACKS") != nullptr;
+    static std::atomic<u32> calls{};
+    if (!enabled || (calls.fetch_add(1, std::memory_order_relaxed) & 63) != 0) {
+        return;
+    }
+    static std::atomic<u32> samples{};
+    if (samples.fetch_add(1, std::memory_order_relaxed) >= 32) {
+        return;
+    }
+    struct State {
+        std::array<uintptr_t, 12> pcs{};
+        size_t count{};
+    } state;
+    _Unwind_Backtrace(
+        [](_Unwind_Context* context, void* arg) -> _Unwind_Reason_Code {
+            auto* s = static_cast<State*>(arg);
+            if (s->count >= s->pcs.size()) {
+                return _URC_END_OF_STACK;
+            }
+            s->pcs[s->count++] = _Unwind_GetIP(context);
+            return _URC_NO_REASON;
+        },
+        &state);
+    std::string text;
+    for (size_t i = 0; i < state.count; ++i) {
+        Dl_info info{};
+        if (dladdr(reinterpret_cast<void*>(state.pcs[i]), &info) != 0 && info.dli_fbase) {
+            text += fmt::format(" {:#x}", state.pcs[i] - reinterpret_cast<uintptr_t>(info.dli_fbase));
+        }
+    }
+    LOG_INFO(HW_GPU, "Download stack:{}", text);
+#endif
+}
+
 template <class P>
 void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64 size) {
     boost::container::small_vector<BufferCopy, 1> copies;
@@ -2797,6 +2849,7 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
             buffer.MarkUsage(copy.src_offset, copy.size);
         }
         runtime.CopyBuffer(download_staging.buffer, buffer, copies_span, true);
+        Nx2SampleDownloadStack();
         runtime.Finish();
         for (const BufferCopy& copy : copies) {
             const DAddr copy_device_addr = buffer.CpuAddr() + copy.src_offset;

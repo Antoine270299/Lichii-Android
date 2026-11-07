@@ -53,6 +53,8 @@ template <typename Func>
 void OnBack(const Func& func) {
     if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
         split.Defer(func);
+        // Semaphore and fence writes: they end the front's macro DMA read snapshots.
+        split.NoteUnrangedWriter();
     } else {
         func();
     }
@@ -69,7 +71,11 @@ void DrainBack() {
 // The fence manager records into the scheduler and downloads the CPU's writes over GPU data:
 // the back's state, which a drained back still uses from its idle hook (it submits).
 void ReleaseFences(DmaPusher& dma_pusher) {
-    VideoCommon::GpuSplit::Get().Run(
+    auto& split = VideoCommon::GpuSplit::Get();
+    if (split.Active()) {
+        split.NoteUnrangedWriter();
+    }
+    split.Run(
         [rasterizer = dma_pusher.rasterizer] { rasterizer->ReleaseFences(); },
         VideoCommon::DrainSite::FenceRelease);
 }
