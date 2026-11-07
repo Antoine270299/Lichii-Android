@@ -552,6 +552,19 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     }
     if (!launch_description.block_dim_x || !launch_description.block_dim_y || !launch_description.block_dim_z)
         return false;
+    if (const u64 groups = u64{launch_description.grid_dim_x.Value()} *
+                           launch_description.grid_dim_y.Value() *
+                           launch_description.grid_dim_z.Value();
+        groups > (u64{1} << 20)) {
+        static u32 logged{};
+        if (logged++ < 64) {
+            LOG_WARNING(HW_GPU, "Native compute dispatch of {}x{}x{} groups ({}x{}x{} threads) at {:#x}",
+                        launch_description.grid_dim_x.Value(), launch_description.grid_dim_y.Value(),
+                        launch_description.grid_dim_z.Value(), launch_description.block_dim_x.Value(),
+                        launch_description.block_dim_y.Value(), launch_description.block_dim_z.Value(),
+                        regs.code_loc.Address());
+        }
+    }
     dlss_chain.output_pass = false;
     // Fortune's Weave's evaluation is 13 dispatches. Bound incomplete evaluations, including
     // skipped dispatches, so a missing output pass cannot keep the chain active indefinitely.

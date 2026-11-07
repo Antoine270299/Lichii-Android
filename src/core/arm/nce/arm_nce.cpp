@@ -81,7 +81,17 @@ bool IsWriteFault(mcontext_t& host_ctx) {
 // ~5 FPS for seconds at a time, where the old path hands a page over once.
 bool RunStoreToGpuPage(Core::Memory::Memory& memory, mcontext_t& host_ctx, u64 page) {
     static constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
-    if (Settings::GetCurrentProgramID() != OcarinaOfTime || !IsWriteFault(host_ctx)) {
+    // EDEN_NX2_NCE_GPU_STORES=1 or 0 turns this on or off for any game.
+    static const int forced = [] {
+        const char* value = std::getenv("EDEN_NX2_NCE_GPU_STORES");
+        return value == nullptr ? -1 : (value[0] == '0' ? 0 : 1);
+    }();
+    // Off for Ocarina of Time too: it stores command words next to the tile counts a compute
+    // shader writes, and with this its lighting dispatches read garbage counts (71 million
+    // groups), each running for seconds on a phone.
+    (void)OcarinaOfTime;
+    const bool enabled = forced == 1;
+    if (!enabled || !IsWriteFault(host_ctx)) {
         return false;
     }
     struct Run {
