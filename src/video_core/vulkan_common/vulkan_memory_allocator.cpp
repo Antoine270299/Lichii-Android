@@ -290,6 +290,17 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
     }
     vk::Check(result);
 
+    // EDEN_NX2_GPU_PROFILE: images with 8 MiB or more of device memory, as the driver sized them.
+    static const bool profile = std::getenv("EDEN_NX2_GPU_PROFILE") != nullptr;
+    if (profile && alloc_info.size >= (u64{8} << 20)) {
+        static std::atomic<u32> logged{};
+        if (logged.fetch_add(1, std::memory_order_relaxed) < 200) {
+            LOG_INFO(Render_Vulkan, "Image memory: {}x{}x{} levels {} layers {} format {}: {} MiB",
+                     ci.extent.width, ci.extent.height, ci.extent.depth, ci.mipLevels,
+                     ci.arrayLayers, static_cast<u32>(ci.format), alloc_info.size >> 20);
+        }
+    }
+
     // Log GPU memory allocation for images
     if (GPU::Logging::IsActive() &&
         Settings::values.gpu_log_memory_tracking.GetValue()) {

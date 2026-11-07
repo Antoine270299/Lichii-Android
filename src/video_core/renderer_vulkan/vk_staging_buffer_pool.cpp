@@ -205,6 +205,37 @@ StagingBufferRef StagingBufferPool::GetStagingBuffer(size_t size, MemoryUsage us
     if (const std::optional<StagingBufferRef> ref = TryGetReservedBuffer(size, usage, deferred)) {
         return *ref;
     }
+    // Ocarina of Time loads a scene's textures in one frame: its uploads pooled ~400 MiB of
+    // staging before any frame could free them, pushing a 12 GB phone's app over its memory.
+    // Past the cap, wait for the GPU and reuse or free what it is done with.
+    // (Download buffers are kept: the copy-back reuses them fence after fence.)
+    static constexpr u64 MaxPooledBytes = u64{256} << 20;
+    if (usage != MemoryUsage::Download && !deferred) {
+        StagingBuffersCache& cache = GetCache(usage);
+        u64 pooled = 0;
+        for (size_t level = 0; level < NUM_LEVELS; ++level) {
+            pooled += u64{cache[level].entries.size()} << level;
+        }
+        if (pooled + size > MaxPooledBytes) {
+            scheduler.Finish();
+            if (const std::optional<StagingBufferRef> ref =
+                    TryGetReservedBuffer(size, usage, deferred)) {
+                return *ref;
+            }
+            for (size_t level = 0; level < NUM_LEVELS; ++level) {
+                auto& entries = cache[level].entries;
+                const size_t old_size = entries.size();
+                std::erase_if(entries, [this](const StagingBuffer& entry) {
+                    return !entry.deferred && scheduler.IsFree(entry.tick);
+                });
+                if (VideoCommon::Nx2Profile::Enabled() && entries.size() < old_size) {
+                    g_staging_bytes.fetch_sub(u64{old_size - entries.size()} << level);
+                }
+                cache[level].delete_index = 0;
+                cache[level].iterate_index = 0;
+            }
+        }
+    }
     return CreateStagingBuffer(size, usage, deferred);
 }
 
