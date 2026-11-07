@@ -146,6 +146,15 @@ void StagingBufferPool::TickFrame() {
     ReleaseCache(MemoryUsage::DeviceLocal);
     ReleaseCache(MemoryUsage::Upload);
     ReleaseCache(MemoryUsage::Download);
+    // Upload buffers of 16 MiB and up mostly carry a scene load's textures; visited one level a
+    // frame, Ocarina of Time kept ~500 MiB of them after loading. Free them once the GPU is done.
+    // (Download buffers that size are reused fence after fence by the copy-back.)
+    for (size_t level = 24; level < NUM_LEVELS; ++level) {
+        if (level != current_delete_level) {
+            ReleaseLevel(device_local_cache, level);
+            ReleaseLevel(upload_cache, level);
+        }
+    }
 }
 
 StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
