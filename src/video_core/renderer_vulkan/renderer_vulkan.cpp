@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -261,7 +262,14 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     if (trace) {
         scheduler.MarkFrameEnd(++trace_frame);
     }
-    scheduler.Flush(*frame->render_ready);
+    // EDEN_NX2_PRESENT_FINISH=1 waits for the frame's GPU work before handing it to the
+    // presenter, to tell a present-side race apart from bad frame contents.
+    static const bool present_finish = std::getenv("EDEN_NX2_PRESENT_FINISH") != nullptr;
+    if (present_finish) {
+        scheduler.Finish(*frame->render_ready);
+    } else {
+        scheduler.Flush(*frame->render_ready);
+    }
 
     const auto presenting = trace ? std::chrono::steady_clock::now()
                                   : std::chrono::steady_clock::time_point{};
