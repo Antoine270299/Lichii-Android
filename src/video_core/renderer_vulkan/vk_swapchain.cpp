@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -343,7 +344,14 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
         .viewFormatCount = static_cast<u32>(view_formats.size()),
         .pViewFormats = view_formats.data(),
     };
-    if (device.IsKhrSwapchainMutableFormatEnabled()) {
+    // EDEN_NX2_NO_MUTABLE_SWAPCHAIN=1 creates the swapchain without mutable formats, to test
+    // whether the format list breaks the gralloc buffer layout on Turnip (striped output).
+    static const bool no_mutable = std::getenv("EDEN_NX2_NO_MUTABLE_SWAPCHAIN") != nullptr;
+    LOG_INFO(Render_Vulkan, "Swapchain format {} colorspace {}, mutable format {}",
+             static_cast<u32>(swapchain_ci.imageFormat),
+             static_cast<u32>(swapchain_ci.imageColorSpace),
+             device.IsKhrSwapchainMutableFormatEnabled() && !no_mutable);
+    if (device.IsKhrSwapchainMutableFormatEnabled() && !no_mutable) {
         format_list.pNext = std::exchange(swapchain_ci.pNext, &format_list);
         swapchain_ci.flags |= VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR;
     }
@@ -363,6 +371,9 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
 #else
     image_view_format = VK_FORMAT_B8G8R8A8_UNORM;
 #endif
+    if (no_mutable) {
+        image_view_format = swapchain_ci.imageFormat;
+    }
 }
 
 void Swapchain::CreateSemaphores() {
