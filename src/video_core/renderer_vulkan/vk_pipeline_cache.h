@@ -199,6 +199,8 @@ private:
 
     Shader::Profile profile;
     Shader::HostTranslateInfo host_info;
+    Shader::Profile compute_profile;
+    Shader::HostTranslateInfo compute_host_info;
 
     std::filesystem::path pipeline_cache_filename;
 
