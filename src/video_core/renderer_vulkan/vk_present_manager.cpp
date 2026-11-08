@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include "common/settings.h"
 #include "common/thread.h"
 #include "core/frontend/emu_window.h"
@@ -131,6 +132,8 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     , storage_supported{CanStoreToFrame(device.GetPhysical(), swapchain.GetImageFormat())}
     , use_present_thread{Settings::values.async_presentation.GetValue()}
 {
+    LOG_INFO(Render_Vulkan, "Present: blit to swapchain {}, storage frames {}", blit_supported,
+             storage_supported);
     SetImageCount();
 
     auto& dld = device.GetLogical();
@@ -534,7 +537,10 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
     cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, VK_PIPELINE_STAGE_TRANSFER_BIT, {},
                            {}, {}, pre_barriers);
 
-    if (blit_supported) {
+    // EDEN_NX2_PRESENT_NO_BLIT=1 copies the frame into the swapchain image instead of blitting
+    // it, to test the blit path into gralloc buffers on Turnip (striped output).
+    static const bool no_blit = std::getenv("EDEN_NX2_PRESENT_NO_BLIT") != nullptr;
+    if (blit_supported && !no_blit) {
         cmdbuf.BlitImage(*frame->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                          MakeImageBlit(frame->width, frame->height, extent.width, extent.height),
