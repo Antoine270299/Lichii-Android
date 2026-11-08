@@ -20,6 +20,13 @@
 
 namespace Vulkan {
 
+namespace {
+bool CitronPresent() {
+    static const bool enabled = std::getenv("EDEN_NX2_CITRON_PRESENT") != nullptr;
+    return enabled;
+}
+} // Anonymous namespace
+
 
 namespace {
 
@@ -223,11 +230,25 @@ void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat
     if (with_storage) {
         storage_usage = VK_IMAGE_USAGE_STORAGE_BIT;
     }
+    // EDEN_NX2_CITRON_PRESENT=1 creates frames as Citron does (mutable format only, transfer
+    // source and colour attachment), to test the frame layout Turnip picks on Adreno 8xx.
+    const bool citron_frame = CitronPresent() && !with_storage;
+    const VkImageCreateFlags frame_flags =
+        citron_frame ? VkImageCreateFlags{VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT}
+                     : VkImageCreateFlags{VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
+                                          VK_IMAGE_CREATE_EXTENDED_USAGE_BIT};
+    const VkImageUsageFlags frame_usage =
+        citron_frame ? VkImageUsageFlags{VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT}
+                     : VkImageUsageFlags{VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                         VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage};
 
     frame->image = memory_allocator.CreateImage({
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT,
+        .flags = frame_flags,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = swapchain.GetImageFormat(),
         .extent =
@@ -240,8 +261,7 @@ void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage,
+        .usage = frame_usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
@@ -534,8 +554,9 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
         },
     };
 
-    cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, VK_PIPELINE_STAGE_TRANSFER_BIT, {},
-                           {}, {}, pre_barriers);
+    cmdbuf.PipelineBarrier(CitronPresent() ? VkPipelineStageFlags{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT}
+                                           : VkPipelineStageFlags{vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER},
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, {}, {}, {}, pre_barriers);
 
     // EDEN_NX2_PRESENT_NO_BLIT=1 copies the frame into the swapchain image instead of blitting
     // it, to test the blit path into gralloc buffers on Turnip (striped output).
@@ -560,10 +581,15 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
     const VkSemaphore render_semaphore = swapchain.CurrentRenderSemaphore();
     const std::array wait_semaphores = {present_semaphore, *frame->render_ready};
 
-    static constexpr std::array<VkPipelineStageFlags, 2> wait_stage_masks{
+    static constexpr std::array<VkPipelineStageFlags, 2> transfer_wait_stages{
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
     };
+    static constexpr std::array<VkPipelineStageFlags, 2> citron_wait_stages{
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    };
+    const auto& wait_stage_masks = CitronPresent() ? citron_wait_stages : transfer_wait_stages;
 
     const VkSubmitInfo submit_info{
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
