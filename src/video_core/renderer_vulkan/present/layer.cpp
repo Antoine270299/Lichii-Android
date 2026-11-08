@@ -4,6 +4,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <variant>
 #include "video_core/present.h"
 #include "video_core/renderer_vulkan/present/anti_alias_pass.h"
@@ -120,9 +123,68 @@ void Layer::ConfigureDraw(const Device& device, PresentPushConstants* out_push_c
         UpdateRawImage(framebuffer, image_index);
     }
 
-    VkImage source_image = texture_info ? texture_info->image : *raw_images[image_index];
+    // EDEN_NX2_PRESENT_COPY=1 copies the game's image into a layer-owned image and samples that,
+    // to tell a bad direct sample of the texture cache image (striped output on Turnip) apart
+    // from bad image contents.
+    static const bool present_copy = std::getenv("EDEN_NX2_PRESENT_COPY") != nullptr;
+    const bool copied = use_accelerated && present_copy && scaled_width == texture_width &&
+                        scaled_height == texture_height;
+    if (copied) {
+        const VkImage src = texture_info->image;
+        const VkImage dst = *raw_images[image_index];
+        const u32 copy_width = (std::min)(texture_width, raw_width);
+        const u32 copy_height = (std::min)(texture_height, raw_height);
+        scheduler.Record([src, dst, copy_width, copy_height](vk::CommandBuffer cmdbuf) {
+            constexpr VkImageSubresourceRange range{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            };
+            const auto barrier = [&range](VkImage image, VkAccessFlags src_access,
+                                          VkAccessFlags dst_access) {
+                return VkImageMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = src_access,
+                    .dstAccessMask = dst_access,
+                    .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+                    .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = image,
+                    .subresourceRange = range,
+                };
+            };
+            const std::array pre{
+                barrier(src, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+                barrier(dst, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
+            };
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                   VK_PIPELINE_STAGE_TRANSFER_BIT, 0, {}, {}, pre);
+            const VkImageCopy region{
+                .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                .srcOffset = {0, 0, 0},
+                .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                .dstOffset = {0, 0, 0},
+                .extent = {copy_width, copy_height, 1},
+            };
+            cmdbuf.CopyImage(src, VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_GENERAL, region);
+            const std::array post{
+                barrier(src, VK_ACCESS_TRANSFER_READ_BIT,
+                        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT),
+                barrier(dst, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
+            };
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, {}, {}, post);
+        });
+    }
+
+    VkImage source_image =
+        texture_info && !copied ? texture_info->image : *raw_images[image_index];
     VkImageView source_image_view =
-        texture_info ? texture_info->image_view : *raw_image_views[image_index];
+        texture_info && !copied ? texture_info->image_view : *raw_image_views[image_index];
 
     if (auto* fxaa = std::get_if<FXAA>(&anti_alias)) {
         fxaa->Draw(device, scheduler, image_index, &source_image, &source_image_view);
