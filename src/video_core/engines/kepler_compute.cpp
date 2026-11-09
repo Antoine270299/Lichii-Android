@@ -1269,6 +1269,43 @@ bool KeplerCompute::ProcessOcarinaMovie(u64 program_id, u64 native_key) {
     return true;
 }
 
+bool KeplerCompute::ProcessOcarinaFilter(u64 program_id, u64 native_key) {
+    using namespace VideoCommon::OcarinaMovie;
+    static const bool native = [] {
+        const char* const value = std::getenv("EDEN_NX2_OCARINA_FILTER");
+        return value && std::string_view{value} == "native";
+    }();
+    static bool failed = false;
+    if (native || failed || program_id != ProgramId || native_key != GameplayFilterKey) {
+        return false;
+    }
+    const auto input = ComputeImageHandle(GameplayFilterInputOffset);
+    const auto output = ComputeImageHandle(GameplayFilterOutputOffset);
+    const bool usable = input && output && input->Address() != 0 && output->Address() != 0 &&
+                        input->Address() != output->Address() &&
+                        input->Width() == output->Width() && input->Height() == output->Height();
+    if (!usable || !rasterizer->AccelerateTicImageCopy(*output, *input)) {
+        failed = true;
+        LOG_WARNING(HW_GPU,
+                    "Ocarina of Time filter: the copy is unavailable (input {:#x} {}x{} format {}, "
+                    "output {:#x} {}x{} format {}); the filter runs natively",
+                    input ? input->Address() : 0, input ? input->Width() : 0,
+                    input ? input->Height() : 0,
+                    input ? static_cast<u32>(input->format.Value()) : 0,
+                    output ? output->Address() : 0, output ? output->Width() : 0,
+                    output ? output->Height() : 0,
+                    output ? static_cast<u32>(output->format.Value()) : 0);
+        return false;
+    }
+    static bool logged = false;
+    if (!std::exchange(logged, true)) {
+        LOG_INFO(HW_GPU, "Ocarina of Time filter: scene colour {:#x} {}x{} copied into {:#x} in "
+                         "place of the tensor filter",
+                 input->Address(), input->Width(), input->Height(), output->Address());
+    }
+    return true;
+}
+
 void KeplerCompute::ProcessLaunch() {
     const GPUVAddr launch_desc_loc = regs.launch_desc_loc.Address();
     memory_manager.ReadBlockUnsafe(launch_desc_loc, &launch_description,

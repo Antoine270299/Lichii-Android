@@ -1237,6 +1237,58 @@ std::optional<VideoCore::GameDlssProbe> TextureCache<P>::ProbeGameDlssOutput(
 }
 
 template <class P>
+bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst,
+                                   const Tegra::Texture::TICEntry& src) {
+    if constexpr (FRAMEBUFFER_BLITS) {
+        return false;
+    } else {
+        const ImageInfo src_info(src);
+        const ImageInfo dst_info(dst);
+        has_deleted_images = false;
+        const ImageId src_id = FindOrInsertImage(src_info, src.Address(), RelaxedOptions{});
+        const ImageId dst_id = FindOrInsertImage(dst_info, dst.Address(), RelaxedOptions{});
+        if (!src_id || !dst_id || src_id == dst_id || has_deleted_images) {
+            return false;
+        }
+        PrepareImage(src_id, false, false);
+        PrepareImage(dst_id, true, false);
+        for (const ImageId id : {src_id, dst_id}) {
+            if (slot_images[id].info.num_samples != 1 ||
+                True(slot_images[id].flags & ImageFlagBits::Rescaled)) {
+                return false;
+            }
+        }
+        const std::optional src_base = slot_images[src_id].TryFindBase(src.Address());
+        const std::optional dst_base = slot_images[dst_id].TryFindBase(dst.Address());
+        if (!src_base || !dst_base) {
+            return false;
+        }
+        const PixelFormat src_format = slot_images[src_id].info.format;
+        const PixelFormat dst_format = slot_images[dst_id].info.format;
+        const ImageViewId src_view_id = FindOrEmplaceImageView(
+            src_id, ImageViewInfo(ImageViewType::e2D, src_format,
+                                  SubresourceRange{.base = *src_base, .extent = {1, 1}}));
+        const auto [dst_framebuffer_id, dst_view_id] = RenderTargetFromImage(
+            dst_id, ImageViewInfo(ImageViewType::e2D, dst_format,
+                                  SubresourceRange{.base = *dst_base, .extent = {1, 1}}));
+        const Region2D src_region{
+            Offset2D{.x = 0, .y = 0},
+            Offset2D{.x = static_cast<s32>(src.Width()), .y = static_cast<s32>(src.Height())},
+        };
+        const Region2D dst_region{
+            Offset2D{.x = 0, .y = 0},
+            Offset2D{.x = static_cast<s32>(dst.Width()), .y = static_cast<s32>(dst.Height())},
+        };
+        Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
+        runtime.BlitImage(dst_framebuffer, slot_image_views[dst_view_id],
+                          slot_image_views[src_view_id], dst_region, src_region,
+                          Tegra::Engines::Fermi2D::Filter::Bilinear,
+                          Tegra::Engines::Fermi2D::Operation::SrcCopy);
+        return true;
+    }
+}
+
+template <class P>
 bool TextureCache<P>::TemporalUpscale(const Tegra::Engines::Fermi2D::Surface& dst,
                                       const Tegra::Engines::Fermi2D::Surface& src,
                                       const Tegra::Engines::Fermi2D::Surface& motion_vectors,

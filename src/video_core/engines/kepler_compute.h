@@ -256,6 +256,9 @@ public:
     /// Ocarina of Time's movie network (ocarina_movie.h): true when this dispatch is skipped or
     /// replaced.
     bool ProcessOcarinaMovie(u64 program_id, u64 native_key);
+    /// Ocarina of Time's gameplay filter (ocarina_movie.h): true when the dispatch is replaced by a
+    /// copy of its input. EDEN_NX2_OCARINA_FILTER=native keeps the game's own pass.
+    bool ProcessOcarinaFilter(u64 program_id, u64 native_key);
     void TraceDlssContract(u64 native_key, bool warn_unvalidated = true);
     /// EDEN_NX2_OCARINA_TRACE: logs each Ocarina of Time compute pass (native key, shader hash,
     /// grid) once per grid size, with the images its constant buffer 0 points at.

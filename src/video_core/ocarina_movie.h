@@ -29,6 +29,14 @@ constexpr u64 OutputKey = 0x6093c9143ba0904dULL;
 constexpr u32 ConvertImageOffset = 0x68;
 constexpr u32 OutputImageOffset = 0xc8;
 
+// Gameplay frames: one tensor pass filters the 1920x1080 scene colour (E5B9G9R9, read through
+// the texture at constant buffer 0 offset 0xc0) into the image the frame continues with
+// (B10G11R11, written through the image at 0xd0). Emulating its matrix multiplies costs a phone GPU
+// ~220 ms a frame; copying the scene colour in its place keeps the frame without the filter.
+constexpr u64 GameplayFilterKey = 0xda6df3e54c716df2ULL;
+constexpr u32 GameplayFilterInputOffset = 0xc0;
+constexpr u32 GameplayFilterOutputOffset = 0xd0;
+
 constexpr bool IsNetwork(u64 native_key) {
     return std::ranges::find(NetworkKeys, native_key) != NetworkKeys.end();
 }

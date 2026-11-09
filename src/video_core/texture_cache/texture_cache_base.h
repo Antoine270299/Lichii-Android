@@ -293,6 +293,10 @@ public:
                    const Tegra::Engines::Fermi2D::Surface& src,
                    const Tegra::Engines::Fermi2D::Config& copy);
 
+    /// Copies the image a TIC entry describes into another one (bilinear, formats converted), in
+    /// place of a compute pass that would write dst from src. False when it can't.
+    bool CopyTicImage(const Tegra::Texture::TICEntry& dst, const Tegra::Texture::TICEntry& src);
+
     /// Stand-in for a DLSS evaluation: temporal upscale of src into dst (see the runtime's
     /// TemporalUpscale). False when unsupported; the caller retains its native dispatch.
     bool TemporalUpscale(const Tegra::Engines::Fermi2D::Surface& dst,

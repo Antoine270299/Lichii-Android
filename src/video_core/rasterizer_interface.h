@@ -209,6 +209,13 @@ public:
         return false;
     }
 
+    /// Copies the image the TIC entry src describes into dst, in place of a compute pass (see
+    /// TextureCache::CopyTicImage). False when unsupported; the caller runs the pass natively.
+    [[nodiscard]] virtual bool AccelerateTicImageCopy(const Tegra::Texture::TICEntry& dst,
+                                                      const Tegra::Texture::TICEntry& src) {
+        return false;
+    }
+
     /// Stand-in for a DLSS evaluation: temporal upscale of src into dst along motion_vectors
     /// (jitter in src pixels; motion_scale turns a motion vector into a UV offset to the previous
     /// frame), with depth for NVIDIA DLSS or FSR 3.1. With use_history=false, only de-jitter src.
