@@ -257,6 +257,9 @@ public:
     /// replaced.
     bool ProcessOcarinaMovie(u64 program_id, u64 native_key);
     void TraceDlssContract(u64 native_key, bool warn_unvalidated = true);
+    /// EDEN_NX2_OCARINA_TRACE: logs each Ocarina of Time compute pass (native key, shader hash,
+    /// grid) once per grid size, with the images its constant buffer 0 points at.
+    void TraceOcarinaDispatch(u64 program_id, u64 native_key, u64 shader_hash);
 
     /// GPU thread split with macros on its front half (gpu_split.h, EDEN_NX2_SPLIT=2), called by
     /// the front instead of CallMethod for native compute engines: runs their macros and macro

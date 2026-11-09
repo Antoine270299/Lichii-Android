@@ -4,6 +4,8 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <set>
+#include <tuple>
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -1013,6 +1015,62 @@ void KeplerCompute::TraceDlssContract(u64 native_key, bool warn_unvalidated) {
         LOG_INFO(HW_GPU, "DLSS contract handle+{:03x}={:08x}: tic={} addr={:#x} {}x{} raw={:08x}",
                  offset, handle, index, tic.Address(), tic.Width(), tic.Height(),
                  fmt::join(words, " "));
+    }
+}
+
+// EDEN_NX2_OCARINA_TRACE: Ocarina of Time renders its gameplay frames through compute passes
+// whose tensor network costs a phone GPU hundreds of milliseconds a frame. To find the chain's
+// passes and images, log every pass once per grid size (at most 400 lines): its native key, the
+// shader hash the GPU timings use, its grid, and the textures constant buffer 0 points at.
+void KeplerCompute::TraceOcarinaDispatch(u64 program_id, u64 native_key, u64 shader_hash) {
+    static const bool enabled = std::getenv("EDEN_NX2_OCARINA_TRACE") != nullptr;
+    if (!enabled || program_id != VideoCommon::OcarinaMovie::ProgramId) {
+        return;
+    }
+    static std::set<std::tuple<u64, u32, u32>> seen;
+    static u32 lines = 0;
+    const u32 grid_x = launch_description.grid_dim_x.Value();
+    const u32 grid_y = launch_description.grid_dim_y.Value();
+    if (lines >= 400 || !seen.emplace(native_key, grid_x, grid_y).second) {
+        return;
+    }
+    const auto& cbuf = launch_description.const_buffer_config[0];
+    const GPUVAddr address = (GPUVAddr{cbuf.address_high} << 32) | cbuf.address_low;
+    const u32 bytes = (launch_description.const_buffer_enable_mask & 1)
+                          ? std::min<u32>(cbuf.size.Value(), 0x800U)
+                          : 0U;
+    ++lines;
+    LOG_INFO(HW_GPU,
+             "Ocarina pass native={:016x} shader={:016x} grid={}x{}x{} block={}x{}x{} cb0={:#x} "
+             "size={:#x}",
+             native_key, shader_hash, grid_x, grid_y, launch_description.grid_dim_z.Value(),
+             launch_description.block_dim_x.Value(), launch_description.block_dim_y.Value(),
+             launch_description.block_dim_z.Value(), address, cbuf.size.Value());
+    if (bytes < 4 || !memory_manager.IsFullyMappedRange(address, bytes)) {
+        return;
+    }
+    for (u32 offset = 0; offset + 4 <= bytes && lines < 400; offset += 4) {
+        const u32 handle = memory_manager.Read<u32>(address + offset);
+        const u32 index = handle & 0xfffff;
+        if (handle == 0 || (handle >> 20) == 0 || index == 0 || index > regs.tic.limit ||
+            !memory_manager.IsFullyMappedRange(
+                regs.tic.Address() + u64{index} * sizeof(Texture::TICEntry),
+                sizeof(Texture::TICEntry))) {
+            continue;
+        }
+        const auto tic = GetTICEntry(index);
+        if (tic.Address() == 0 || tic.Width() < 64 || tic.Height() < 32 ||
+            tic.Width() > 8192 || tic.Height() > 8192) {
+            continue;
+        }
+        ++lines;
+        LOG_INFO(HW_GPU,
+                 "Ocarina pass native={:016x} image cb0+{:03x}={:08x}: addr={:#x} {}x{} depth {} "
+                 "layer {} type {} format {} srgb {} mips {}",
+                 native_key, offset, handle, tic.Address(), tic.Width(), tic.Height(),
+                 tic.Depth(), tic.BaseLayer(), static_cast<u32>(tic.texture_type.Value()),
+                 static_cast<u32>(tic.format.Value()), tic.srgb_conversion.Value(),
+                 tic.max_mip_level.Value());
     }
 }
 
