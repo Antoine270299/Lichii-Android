@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <string_view>
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -292,6 +293,34 @@ const ShaderInfo* ShaderCache::ComputeShader() {
     if (kepler_compute->IsNativeMode() && shader->lowered_native &&
         kepler_compute->ProcessGameDlss(program_id, shader->lowered_native->native_program_key)) {
         throw FireEmblemUpscale::DispatchReplaced{};
+    }
+    // EDEN_NX2_SKIP_COMPUTE=<native key>[,<native key>...] (hex): skip those compute passes, to
+    // measure what a pass costs and what the frame looks like without it.
+    if (shader->lowered_native) {
+        static const std::vector<u64> skipped = [] {
+            std::vector<u64> keys;
+            if (const char* list = std::getenv("EDEN_NX2_SKIP_COMPUTE")) {
+                std::string_view rest{list};
+                while (!rest.empty()) {
+                    const size_t comma = rest.find(',');
+                    const std::string item{rest.substr(0, comma)};
+                    if (!item.empty()) {
+                        keys.push_back(std::strtoull(item.c_str(), nullptr, 16));
+                    }
+                    if (comma == std::string_view::npos) {
+                        break;
+                    }
+                    rest.remove_prefix(comma + 1);
+                }
+                LOG_WARNING(HW_GPU, "EDEN_NX2_SKIP_COMPUTE: skipping {} compute passes", keys.size());
+            }
+            return keys;
+        }();
+        if (!skipped.empty() &&
+            std::ranges::find(skipped, shader->lowered_native->native_program_key) !=
+                skipped.end()) {
+            throw FireEmblemUpscale::DispatchReplaced{};
+        }
     }
     if (shader->lowered_native) {
         kepler_compute->TraceOcarinaDispatch(program_id,
