@@ -1006,9 +1006,16 @@ void EmitContext::InitGlobalMemoryBases() {
     if (global_base_info == nullptr) {
         return;
     }
-    for (size_t index = 0; index < global_base_vars.size(); ++index) {
-        OpStore(global_base_vars[index], GlobalBaseAddress(*global_base_info, index));
+    global_base_args.clear();
+    for (size_t index = 0; index < global_base_types.size(); ++index) {
+        global_base_args.push_back(GlobalBaseAddress(*global_base_info, index));
     }
+}
+
+Id EmitContext::CallGlobal(Id result_type, Id function, std::initializer_list<Id> args) {
+    std::vector<Id> all(args);
+    all.insert(all.end(), global_base_args.begin(), global_base_args.end());
+    return OpFunctionCall(result_type, function, std::span<const Id>(all));
 }
 
 void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
@@ -1020,25 +1027,33 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
     const Id zero{u32_zero_value};
     static const bool no_base_cache{std::getenv("EDEN_NX2_NO_GLOBAL_BASE_CACHE") != nullptr};
     if (info.native_global_bounds && !no_base_cache) {
-        const Id pointer{TypePointer(spv::StorageClass::Private, U64)};
-        for (size_t index = 0; index < info.storage_buffers_descriptors.size(); ++index) {
-            const Id var{AddGlobalVariable(pointer, spv::StorageClass::Private)};
-            if (profile.supported_spirv >= 0x00010400) {
-                interfaces.push_back(var);
-            }
-            global_base_vars.push_back(var);
-        }
+        global_base_types.assign(info.storage_buffers_descriptors.size(), U64);
         global_base_info = &info;
     }
+    // Function types and parameters carry the bases after the regular parameters.
+    const auto function_type{[&](Id result, std::vector<Id> params) {
+        params.insert(params.end(), global_base_types.begin(), global_base_types.end());
+        return TypeFunction(result, std::span<const Id>(params));
+    }};
+    const auto add_base_params{[&] {
+        global_base_params.clear();
+        for (size_t index = 0; index < global_base_types.size(); ++index) {
+            global_base_params.push_back(OpFunctionParameter(U64));
+        }
+    }};
+    const auto call_inner{[&](Id result, Id function, std::vector<Id> args) {
+        args.insert(args.end(), global_base_params.begin(), global_base_params.end());
+        return OpFunctionCall(result, function, std::span<const Id>(args));
+    }};
     const auto define_body{[&](DefPtr ssbo_member, Id addr, Id element_pointer, u32 shift,
                                auto&& callback) {
         AddLabel();
         const size_t num_buffers{info.storage_buffers_descriptors.size()};
         const auto base_address{[&](size_t index) {
-            // Cached at the start of main (EmitPrologue): the bases are the same for every
-            // access, and recomputing them reloads the pointer table at every access.
-            if (index < global_base_vars.size()) {
-                return OpLoad(U64, global_base_vars[index]);
+            // Computed once at the start of main and passed in: recomputing them reloads the
+            // pointer table at every access.
+            if (index < global_base_params.size()) {
+                return global_base_params[index];
             }
             return GlobalBaseAddress(info, index);
         }};
@@ -1091,16 +1106,17 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         }
     }};
     const auto define_load{[&](DefPtr ssbo_member, Id element_pointer, Id type, u32 shift) {
-        const Id function_type{TypeFunction(type, U64)};
-        const Id func_id{OpFunction(type, spv::FunctionControlMask::MaskNone, function_type)};
+        const Id func_id{
+            OpFunction(type, spv::FunctionControlMask::MaskNone, function_type(type, {U64}))};
         const Id addr{OpFunctionParameter(U64)};
+        add_base_params();
         if (!profile.support_descriptor_aliasing && shift > 2) {
             AddLabel();
             std::array<Id, 4> words;
             const u32 count = 1U << (shift - 2);
             for (u32 i = 0; i < count; ++i) {
                 const Id word_address{OpIAdd(U64, addr, Constant(U64, i * sizeof(u32)))};
-                words[i] = OpFunctionCall(U32[1], load_global_func_u32, word_address);
+                words[i] = call_inner(U32[1], load_global_func_u32, {word_address});
             }
             OpReturnValue(OpCompositeConstruct(type, std::span{words}.first(count)));
             OpFunctionEnd();
@@ -1135,17 +1151,18 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         return func_id;
     }};
     const auto define_write{[&](DefPtr ssbo_member, Id element_pointer, Id type, u32 shift) {
-        const Id function_type{TypeFunction(void_id, U64, type)};
-        const Id func_id{OpFunction(void_id, spv::FunctionControlMask::MaskNone, function_type)};
+        const Id func_id{OpFunction(void_id, spv::FunctionControlMask::MaskNone,
+                                    function_type(void_id, {U64, type}))};
         const Id addr{OpFunctionParameter(U64)};
         const Id data{OpFunctionParameter(type)};
+        add_base_params();
         if (!profile.support_descriptor_aliasing && shift > 2) {
             AddLabel();
             const u32 count = 1U << (shift - 2);
             for (u32 i = 0; i < count; ++i) {
                 const Id word_address{OpIAdd(U64, addr, Constant(U64, i * sizeof(u32)))};
                 const Id word{OpCompositeExtract(U32[1], data, i)};
-                OpFunctionCall(void_id, write_global_func_u32, word_address, word);
+                call_inner(void_id, write_global_func_u32, {word_address, word});
             }
             OpReturn();
             OpFunctionEnd();
@@ -1204,8 +1221,8 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             })) {
             continue;
         }
-        const Id function_type{TypeFunction(U32[1], U64, U32[1])};
-        const Id function{OpFunction(U32[1], spv::FunctionControlMask::MaskNone, function_type)};
+        const Id function{OpFunction(U32[1], spv::FunctionControlMask::MaskNone,
+                                     function_type(U32[1], {U64, U32[1]}))};
         if (opcode == IR::Opcode::GlobalAtomicIAdd32) {
             atomic_add_global_func_u32 = function;
         } else {
@@ -1213,6 +1230,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         }
         const Id address{OpFunctionParameter(U64)};
         const Id value{OpFunctionParameter(U32[1])};
+        add_base_params();
         const Id scope{Const(static_cast<u32>(spv::Scope::Device))};
         define_body(&StorageDefinitions::U32, address, storage_types.U32.element, 2,
                     [&](Id pointer, Id, Id) {
@@ -1228,12 +1246,12 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
                 return inst.GetOpcode() == IR::Opcode::GlobalAtomicCompareExchange32;
             });
         })) {
-        const Id function_type{TypeFunction(U32[1], U64, U32[1], U32[1])};
-        atomic_cas_global_func_u32 =
-            OpFunction(U32[1], spv::FunctionControlMask::MaskNone, function_type);
+        atomic_cas_global_func_u32 = OpFunction(U32[1], spv::FunctionControlMask::MaskNone,
+                                                function_type(U32[1], {U64, U32[1], U32[1]}));
         const Id address{OpFunctionParameter(U64)};
         const Id comparator{OpFunctionParameter(U32[1])};
         const Id value{OpFunctionParameter(U32[1])};
+        add_base_params();
         const Id scope{Const(static_cast<u32>(spv::Scope::Device))};
         define_body(&StorageDefinitions::U32, address, storage_types.U32.element, 2,
                     [&](Id pointer, Id, Id) {
@@ -1245,6 +1263,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         OpReturnValue(comparator);
         OpFunctionEnd();
     }
+    global_base_params.clear();
 }
 
 void EmitContext::DefineRescalingInput(const Info& info) {
