@@ -2126,9 +2126,10 @@ std::optional<VideoCore::GameDlssProbe> RasterizerVulkan::ProbeGameDlssOutput(
 }
 
 bool RasterizerVulkan::AccelerateTicImageCopy(const Tegra::Texture::TICEntry& dst,
-                                              const Tegra::Texture::TICEntry& src) {
+                                              const Tegra::Texture::TICEntry& src,
+                                              float color_scale) {
     std::scoped_lock lock{texture_cache.mutex};
-    return texture_cache.CopyTicImage(dst, src);
+    return texture_cache.CopyTicImage(dst, src, color_scale);
 }
 
 bool RasterizerVulkan::AccelerateTemporalUpscale(

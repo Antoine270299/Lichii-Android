@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <bit>
 #include <algorithm>
 
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
@@ -1422,6 +1423,19 @@ void BlitImageHelper::ConvertDepthStencil(VkPipeline pipeline, const Framebuffer
     scheduler.InvalidateState();
 }
 
+void BlitImageHelper::BlitColorScaled(const Framebuffer* dst_framebuffer,
+                                      const ImageView& src_image_view, const Region2D& dst_region,
+                                      const Region2D& src_region, float scale) {
+    const BlitImagePipelineKey key{
+        .renderpass = dst_framebuffer->RenderPass(),
+        .operation = Tegra::Engines::Fermi2D::Operation::SrcCopy,
+        .color_scale_bits = std::bit_cast<u32>(scale),
+    };
+    BlitImpl(dst_framebuffer, src_image_view, dst_region, src_region,
+             FindOrEmplaceColorPipeline(key), *linear_sampler,
+             src_image_view.Handle(Shader::TextureType::Color2D), VK_NULL_HANDLE, false);
+}
+
 VkPipeline BlitImageHelper::FindOrEmplaceColorPipeline(const BlitImagePipelineKey& key) {
     const auto it = std::ranges::find(blit_color_keys, key);
     if (it != blit_color_keys.end()) {
@@ -1433,12 +1447,15 @@ VkPipeline BlitImageHelper::FindOrEmplaceColorPipeline(const BlitImagePipelineKe
         key.operation == Tegra::Engines::Fermi2D::Operation::SrcCopySrgbToLinear;
     const std::array stages = MakeStages(
         *full_screen_vert, srgb_to_linear ? *blit_color_srgb_to_linear_frag : *blit_color_to_color_frag);
+    // A colour scale multiplies the source by the blend constants: src * constant + dst * 0.
+    const bool scaled = key.color_scale_bits != 0;
+    const float color_scale = std::bit_cast<float>(key.color_scale_bits);
     const VkPipelineColorBlendAttachmentState blend_attachment{
-        .blendEnable = VK_FALSE,
-        .srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+        .blendEnable = scaled ? VK_TRUE : VK_FALSE,
+        .srcColorBlendFactor = scaled ? VK_BLEND_FACTOR_CONSTANT_COLOR : VK_BLEND_FACTOR_ZERO,
         .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
         .colorBlendOp = VK_BLEND_OP_ADD,
-        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+        .srcAlphaBlendFactor = scaled ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ZERO,
         .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
         .alphaBlendOp = VK_BLEND_OP_ADD,
         .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -1453,7 +1470,8 @@ VkPipeline BlitImageHelper::FindOrEmplaceColorPipeline(const BlitImagePipelineKe
         .logicOp = VK_LOGIC_OP_CLEAR,
         .attachmentCount = 1,
         .pAttachments = &blend_attachment,
-        .blendConstants = {0.0f, 0.0f, 0.0f, 0.0f},
+        .blendConstants = {scaled ? color_scale : 0.0f, scaled ? color_scale : 0.0f,
+                           scaled ? color_scale : 0.0f, scaled ? 1.0f : 0.0f},
     };
     const VkPipelineInputAssemblyStateCreateInfo input_assembly_ci = GetPipelineInputAssemblyStateCreateInfo(device);
     blit_color_pipelines.push_back(device.GetLogical().CreateGraphicsPipeline({

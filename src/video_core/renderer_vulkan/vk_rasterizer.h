@@ -149,7 +149,7 @@ public:
         const Tegra::Engines::Fermi2D::Surface& src,
         const Tegra::Engines::Fermi2D::Surface& dst) override;
     bool AccelerateTicImageCopy(const Tegra::Texture::TICEntry& dst,
-                                const Tegra::Texture::TICEntry& src) override;
+                                const Tegra::Texture::TICEntry& src, float color_scale) override;
     bool AccelerateTemporalUpscale(const Tegra::Engines::Fermi2D::Surface& src,
                                    const Tegra::Engines::Fermi2D::Surface& dst,
                                    const Tegra::Engines::Fermi2D::Surface& motion_vectors,

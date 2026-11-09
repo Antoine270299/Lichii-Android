@@ -33,6 +33,8 @@ struct BlitImagePipelineKey {
 
     VkRenderPass renderpass;
     Tegra::Engines::Fermi2D::Operation operation;
+    /// Bits of a float multiplying the colour through blend constants; 0 copies unchanged.
+    u32 color_scale_bits = 0;
 };
 
 struct BlitDepthStencilPipelineKey {
@@ -77,6 +79,10 @@ public:
                    const Region2D& dst_region, const Region2D& src_region,
                    Tegra::Engines::Fermi2D::Filter filter,
                    Tegra::Engines::Fermi2D::Operation operation);
+
+    /// BlitColor with the colour (not alpha) multiplied by scale, through blend constants.
+    void BlitColorScaled(const Framebuffer* dst_framebuffer, const ImageView& src_image_view,
+                         const Region2D& dst_region, const Region2D& src_region, float scale);
 
     void BlitColor(const Framebuffer* dst_framebuffer, VkImageView src_image_view,
                    VkImage src_image, VkSampler src_sampler, const Region2D& dst_region,

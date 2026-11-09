@@ -212,7 +212,8 @@ public:
     /// Copies the image the TIC entry src describes into dst, in place of a compute pass (see
     /// TextureCache::CopyTicImage). False when unsupported; the caller runs the pass natively.
     [[nodiscard]] virtual bool AccelerateTicImageCopy(const Tegra::Texture::TICEntry& dst,
-                                                      const Tegra::Texture::TICEntry& src) {
+                                                      const Tegra::Texture::TICEntry& src,
+                                                      float color_scale = 1.0f) {
         return false;
     }
 

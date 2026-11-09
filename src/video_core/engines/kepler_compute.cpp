@@ -1285,7 +1285,14 @@ bool KeplerCompute::ProcessOcarinaFilter(u64 program_id, u64 native_key) {
     const bool usable = input && output && input->Address() != 0 && output->Address() != 0 &&
                         input->Address() != output->Address() &&
                         input->Width() == output->Width() && input->Height() == output->Height();
-    if (!usable || !rasterizer->AccelerateTicImageCopy(*output, *input)) {
+    // The game's filter also brings the scene colour to the exposure its tone mapping expects;
+    // the copy approximates that with a fixed scale (EDEN_NX2_OCARINA_EXPOSURE, default 0.6).
+    static const float exposure = [] {
+        const char* const value = std::getenv("EDEN_NX2_OCARINA_EXPOSURE");
+        const float parsed = value ? std::strtof(value, nullptr) : 0.6f;
+        return parsed > 0.0f && parsed < 16.0f ? parsed : 0.6f;
+    }();
+    if (!usable || !rasterizer->AccelerateTicImageCopy(*output, *input, exposure)) {
         ++failures;
         LOG_WARNING(HW_GPU,
                     "Ocarina of Time filter: the copy is unavailable (input {:#x} {}x{} format {}, "

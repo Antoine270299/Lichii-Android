@@ -1238,7 +1238,7 @@ std::optional<VideoCore::GameDlssProbe> TextureCache<P>::ProbeGameDlssOutput(
 
 template <class P>
 bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst_tic,
-                                   const Tegra::Texture::TICEntry& src_tic) {
+                                   const Tegra::Texture::TICEntry& src_tic, float color_scale) {
     if constexpr (FRAMEBUFFER_BLITS) {
         return false;
     } else {
@@ -1331,10 +1331,15 @@ bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst_tic,
             Offset2D{.x = scaled(dst.Width()), .y = scaled(dst.Height())},
         };
         Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
-        runtime.BlitImage(dst_framebuffer, slot_image_views[dst_view_id],
-                          slot_image_views[src_view_id], dst_region, src_region,
-                          Tegra::Engines::Fermi2D::Filter::Bilinear,
-                          Tegra::Engines::Fermi2D::Operation::SrcCopy);
+        if (color_scale != 1.0f) {
+            runtime.BlitColorScaled(dst_framebuffer, slot_image_views[src_view_id], dst_region,
+                                    src_region, color_scale);
+        } else {
+            runtime.BlitImage(dst_framebuffer, slot_image_views[dst_view_id],
+                              slot_image_views[src_view_id], dst_region, src_region,
+                              Tegra::Engines::Fermi2D::Filter::Bilinear,
+                              Tegra::Engines::Fermi2D::Operation::SrcCopy);
+        }
         static bool logged{};
         if (!std::exchange(logged, true)) {
             LOG_INFO(HW_GPU, "TIC image copy: {:#x} {} (image {}) into {:#x} {}", src.Address(),

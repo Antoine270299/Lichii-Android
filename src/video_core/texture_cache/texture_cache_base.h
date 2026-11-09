@@ -295,7 +295,8 @@ public:
 
     /// Copies the image a TIC entry describes into another one (bilinear, formats converted), in
     /// place of a compute pass that would write dst from src. False when it can't.
-    bool CopyTicImage(const Tegra::Texture::TICEntry& dst, const Tegra::Texture::TICEntry& src);
+    bool CopyTicImage(const Tegra::Texture::TICEntry& dst, const Tegra::Texture::TICEntry& src,
+                      float color_scale = 1.0f);
 
     /// Stand-in for a DLSS evaluation: temporal upscale of src into dst (see the runtime's
     /// TemporalUpscale). False when unsupported; the caller retains its native dispatch.
