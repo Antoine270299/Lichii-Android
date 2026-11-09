@@ -531,6 +531,39 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         Profile::Scope scope{Profile::Zone::DynamicState};
         UpdateDynamicStates();
     }
+    // EDEN_NX2_PROBE_DRAW=<vertex shader hash>: tells where a draw's GPU time goes. Its target is
+    // logged, and with EDEN_NX2_PROBE_MODE=scissor it is drawn through a 1x1 scissor (no fragment
+    // work left: what remains of its time is vertex work).
+    static const u64 probe_hash = [] {
+        const char* const value = std::getenv("EDEN_NX2_PROBE_DRAW");
+        return value ? std::strtoull(value, nullptr, 16) : 0ULL;
+    }();
+    if (probe_hash != 0 && pipeline->ShaderHashes()[1] == probe_hash) {
+        static const bool probe_scissor = [] {
+            const char* const value = std::getenv("EDEN_NX2_PROBE_MODE");
+            return value && std::string_view{value} == "scissor";
+        }();
+        static u32 probe_logged = 0;
+        if (probe_logged < 6) {
+            ++probe_logged;
+            const auto* const probe_fb = texture_cache.GetFramebuffer();
+            const VkExtent2D area = probe_fb->RenderArea();
+            const auto& rt0 = maxwell3d->regs.rt[0];
+            LOG_INFO(Render_Vulkan,
+                     "Probe draw: render area {}x{}, {} colour buffers, depth {}, rt0 {:#x} {}x{} "
+                     "format {}, rescaling {}, scissor probe {}",
+                     area.width, area.height, probe_fb->NumColorBuffers(),
+                     probe_fb->HasAspectDepthBit(), rt0.Address(), rt0.width, rt0.height,
+                     static_cast<u32>(rt0.format), texture_cache.IsRescaling(), probe_scissor);
+        }
+        if (probe_scissor) {
+            scheduler.Record([](vk::CommandBuffer cmdbuf) {
+                const VkRect2D scissor{.offset = {0, 0}, .extent = {1, 1}};
+                cmdbuf.SetScissor(0, vk::Span<VkRect2D>(&scissor, 1));
+            });
+            state_tracker.InvalidateScissors();
+        }
+    }
 
     query_cache.NotifySegment(true);
     HandleTransformFeedback();
