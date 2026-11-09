@@ -1237,31 +1237,59 @@ std::optional<VideoCore::GameDlssProbe> TextureCache<P>::ProbeGameDlssOutput(
 }
 
 template <class P>
-bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst,
-                                   const Tegra::Texture::TICEntry& src) {
+bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst_tic,
+                                   const Tegra::Texture::TICEntry& src_tic) {
     if constexpr (FRAMEBUFFER_BLITS) {
         return false;
     } else {
+        static u32 failures{};
+        const auto fail = [](const char* reason) {
+            if (failures++ < 16) {
+                LOG_WARNING(HW_GPU, "TIC image copy refused: {}", reason);
+            }
+            return false;
+        };
+        // Single 2D images: a TIC entry of a plain 2D image can carry a stray base layer (Ocarina
+        // of Time's carry 32), which would describe a 33-layer array instead.
+        const auto plain = [](Tegra::Texture::TICEntry tic) {
+            tic.layer_base_0_2.Assign(0);
+            tic.layer_base_3_7.Assign(0);
+            tic.layer_base_8_10.Assign(0);
+            return tic;
+        };
+        const Tegra::Texture::TICEntry src = plain(src_tic);
+        const Tegra::Texture::TICEntry dst = plain(dst_tic);
+        if (src.Depth() != 1 || dst.Depth() != 1) {
+            return fail("not single 2D images");
+        }
         const ImageInfo src_info(src);
         const ImageInfo dst_info(dst);
         has_deleted_images = false;
         const ImageId src_id = FindOrInsertImage(src_info, src.Address(), RelaxedOptions{});
         const ImageId dst_id = FindOrInsertImage(dst_info, dst.Address(), RelaxedOptions{});
-        if (!src_id || !dst_id || src_id == dst_id || has_deleted_images) {
-            return false;
+        if (!src_id || !dst_id) {
+            return fail("an image could not be found or made");
+        }
+        if (src_id == dst_id) {
+            return fail("input and output are the same image");
+        }
+        if (has_deleted_images) {
+            return fail("finding the images deleted others");
         }
         PrepareImage(src_id, false, false);
         PrepareImage(dst_id, true, false);
         for (const ImageId id : {src_id, dst_id}) {
-            if (slot_images[id].info.num_samples != 1 ||
-                True(slot_images[id].flags & ImageFlagBits::Rescaled)) {
-                return false;
+            if (slot_images[id].info.num_samples != 1) {
+                return fail("multisampled image");
+            }
+            if (True(slot_images[id].flags & ImageFlagBits::Rescaled)) {
+                return fail("rescaled image");
             }
         }
         const std::optional src_base = slot_images[src_id].TryFindBase(src.Address());
         const std::optional dst_base = slot_images[dst_id].TryFindBase(dst.Address());
         if (!src_base || !dst_base) {
-            return false;
+            return fail("no subresource at the TIC address");
         }
         const PixelFormat src_format = slot_images[src_id].info.format;
         const PixelFormat dst_format = slot_images[dst_id].info.format;
@@ -1284,6 +1312,12 @@ bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst,
                           slot_image_views[src_view_id], dst_region, src_region,
                           Tegra::Engines::Fermi2D::Filter::Bilinear,
                           Tegra::Engines::Fermi2D::Operation::SrcCopy);
+        static bool logged{};
+        if (!std::exchange(logged, true)) {
+            LOG_INFO(HW_GPU, "TIC image copy: {:#x} {} into {:#x} {}", src.Address(),
+                     static_cast<u32>(src_format), dst.Address(),
+                     static_cast<u32>(dst_format));
+        }
         return true;
     }
 }

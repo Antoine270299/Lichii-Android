@@ -1275,8 +1275,9 @@ bool KeplerCompute::ProcessOcarinaFilter(u64 program_id, u64 native_key) {
         const char* const value = std::getenv("EDEN_NX2_OCARINA_FILTER");
         return value && std::string_view{value} == "native";
     }();
-    static bool failed = false;
-    if (native || failed || program_id != ProgramId || native_key != GameplayFilterKey) {
+    // A copy can be refused while the images settle; give up after a few refusals.
+    static u32 failures = 0;
+    if (native || failures >= 8 || program_id != ProgramId || native_key != GameplayFilterKey) {
         return false;
     }
     const auto input = ComputeImageHandle(GameplayFilterInputOffset);
@@ -1285,7 +1286,7 @@ bool KeplerCompute::ProcessOcarinaFilter(u64 program_id, u64 native_key) {
                         input->Address() != output->Address() &&
                         input->Width() == output->Width() && input->Height() == output->Height();
     if (!usable || !rasterizer->AccelerateTicImageCopy(*output, *input)) {
-        failed = true;
+        ++failures;
         LOG_WARNING(HW_GPU,
                     "Ocarina of Time filter: the copy is unavailable (input {:#x} {}x{} format {}, "
                     "output {:#x} {}x{} format {}); the filter runs natively",
