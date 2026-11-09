@@ -17,6 +17,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 #include "common/assert.h"
 #include "common/dkb_frame_trace.h"
 #include "common/logging.h"
@@ -1269,6 +1270,72 @@ bool KeplerCompute::ProcessOcarinaMovie(u64 program_id, u64 native_key) {
     return true;
 }
 
+// EDEN_NX2_OCARINA_PAIR_DUMP=<dir> (with EDEN_NX2_OCARINA_FILTER=native): saves what the tensor
+// filter reads and writes, to fit a replacement offline. Every 100th pass the scene colour is
+// saved, and on the next pass the output image, which still holds that frame's filter result.
+// Images are unswizzled and subsampled by 2 (960x540, raw 32-bit texels); the float constants
+// of cb0 are logged.
+void KeplerCompute::DumpOcarinaFilterPair() {
+    using namespace VideoCommon::OcarinaMovie;
+    static const char* const dir = std::getenv("EDEN_NX2_OCARINA_PAIR_DUMP");
+    static u32 pass = 0;
+    static u32 saved = 0;
+    if (!dir || saved >= 6) {
+        return;
+    }
+    ++pass;
+    const bool want_input = pass % 100 == 0;
+    const bool want_output = pass % 100 == 1 && pass > 1;
+    if (!want_input && !want_output) {
+        return;
+    }
+    const auto tic = ComputeImageHandle(want_input ? GameplayFilterInputOffset
+                                                   : GameplayFilterOutputOffset);
+    if (!tic || !tic->IsBlockLinear() || tic->Address() == 0) {
+        LOG_WARNING(HW_GPU, "Ocarina filter dump: no block linear image at pass {}", pass);
+        return;
+    }
+    const u32 width = tic->Width();
+    const u32 height = tic->Height();
+    const u32 block_height = tic->block_height.Value();
+    const u32 block_depth = tic->block_depth.Value();
+    const std::size_t size =
+        Texture::CalculateSize(true, 4, width, height, 1, block_height, block_depth);
+    std::vector<u8> swizzled(size);
+    memory_manager.ReadBlock(tic->Address(), swizzled.data(), size);
+    std::vector<u8> linear(std::size_t{width} * height * 4);
+    Texture::UnswizzleTexture(linear, swizzled, 4, width, height, 1, block_height, block_depth);
+    std::vector<u32> half;
+    half.reserve(std::size_t{width / 2} * (height / 2));
+    for (u32 y = 0; y + 1 < height; y += 2) {
+        for (u32 x = 0; x + 1 < width; x += 2) {
+            u32 texel;
+            std::memcpy(&texel, linear.data() + (std::size_t{y} * width + x) * 4, 4);
+            half.push_back(texel);
+        }
+    }
+    const u32 index = (want_input ? pass : pass - 1) / 100;
+    const std::string path = std::string{dir} + "/ocarina_" + (want_input ? "in_" : "out_") +
+                             std::to_string(index) + "_f" +
+                             std::to_string(static_cast<u32>(tic->format.Value())) + "_" +
+                             std::to_string(width / 2) + "x" + std::to_string(height / 2) + ".raw";
+    std::ofstream file(path, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(half.data()),
+               static_cast<std::streamsize>(half.size() * 4));
+    const auto& cbuf = launch_description.const_buffer_config[0];
+    const GPUVAddr cb = (GPUVAddr{cbuf.address_high} << 32) | cbuf.address_low;
+    std::string constants;
+    for (const u32 word : {12u, 13u, 24u, 25u, 26u, 27u, 30u, 31u, 32u}) {
+        constants += fmt::format(" w{}={}", word,
+                                 std::bit_cast<f32>(memory_manager.Read<u32>(cb + word * 4)));
+    }
+    LOG_INFO(HW_GPU, "Ocarina filter dump: {} ({}x{} block_height {}){}", path, width, height,
+             block_height, constants);
+    if (!want_input) {
+        ++saved;
+    }
+}
+
 bool KeplerCompute::ProcessOcarinaFilter(u64 program_id, u64 native_key) {
     using namespace VideoCommon::OcarinaMovie;
     static const bool native = [] {
@@ -1277,6 +1344,9 @@ bool KeplerCompute::ProcessOcarinaFilter(u64 program_id, u64 native_key) {
     }();
     // A copy can be refused while the images settle; give up after a few refusals.
     static u32 failures = 0;
+    if (native && program_id == ProgramId && native_key == GameplayFilterKey) {
+        DumpOcarinaFilterPair();
+    }
     if (native || failures >= 8 || program_id != ProgramId || native_key != GameplayFilterKey) {
         return false;
     }

@@ -334,6 +334,7 @@ private:
     /// Ocarina of Time's RGB movie frame (ocarina_movie.h), from this frame's conversion pass.
     std::optional<Texture::TICEntry> ocarina_movie_frame;
     std::optional<Texture::TICEntry> ComputeImageHandle(u32 offset) const;
+    void DumpOcarinaFilterPair();
     bool ProcessNativeMethod(Core::System& system, u32 method, u32 argument, bool is_last_call);
     NativeQmdScheduler native_qmd;
     std::array<u32, 0xc00>* native_data_ram{};
