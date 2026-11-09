@@ -10,6 +10,9 @@
 #include <cstring>
 #include <chrono>
 #include <cstdio>
+#ifdef __ANDROID__
+#include <unistd.h>
+#endif
 #include <memory>
 #include <optional>
 #include <string>
@@ -234,6 +237,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     RenderScreenshot(framebuffers);
     DebugPresentDump(framebuffers);
+    DebugLogcatDump();
     const auto acquiring = trace ? std::chrono::steady_clock::now()
                                  : std::chrono::steady_clock::time_point{};
     Frame* frame = present_manager.GetRenderFrame();
@@ -306,6 +310,28 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
         }
         trace_last_frame = entered;
     }
+}
+
+// EDEN_NX2_LOGCAT=<folder> saves this process's logcat (where Turnip and the Android graphics
+// stack report how they set up the swapchain buffers) 20 seconds after the first frame.
+void RendererVulkan::DebugLogcatDump() {
+#ifdef __ANDROID__
+    static const char* const dir = std::getenv("EDEN_NX2_LOGCAT");
+    if (dir == nullptr) {
+        return;
+    }
+    static const auto start = std::chrono::steady_clock::now();
+    static bool written = false;
+    if (written || std::chrono::steady_clock::now() - start < std::chrono::seconds{20}) {
+        return;
+    }
+    written = true;
+    const std::string path = fmt::format("{}/logcat.txt", dir);
+    const std::string command =
+        fmt::format("logcat -d -v threadtime --pid={} > \"{}\" 2>&1", getpid(), path);
+    const int result = std::system(command.c_str());
+    LOG_INFO(Render_Vulkan, "Logcat dump: wrote {} (result {})", path, result);
+#endif
 }
 
 // EDEN_NX2_PRESENT_DUMP=<folder> renders the presentation path (layer + window adapt) into an
