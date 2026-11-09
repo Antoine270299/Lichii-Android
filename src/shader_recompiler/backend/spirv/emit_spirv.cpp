@@ -163,17 +163,18 @@ Id TypeId(const EmitContext& ctx, IR::Type type) {
 
 void Traverse(EmitContext& ctx, IR::Program& program) {
     IR::Block* current_block{};
+    bool entry_block{true};
     for (const IR::AbstractSyntaxNode& node : program.syntax_list) {
         switch (node.type) {
         case IR::AbstractSyntaxNode::Type::Block: {
             const Id label{node.data.block->Definition<Id>()};
-            const bool first_block{current_block == nullptr};
             if (current_block) {
                 ctx.OpBranch(label);
             }
             current_block = node.data.block;
             ctx.AddLabel(label);
-            if (first_block) {
+            // Only the entry block: current_block is also reset after returns.
+            if (std::exchange(entry_block, false)) {
                 ctx.InitGlobalMemoryBases();
             }
             for (IR::Inst& inst : node.data.block->Instructions()) {
