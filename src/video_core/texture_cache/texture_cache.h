@@ -1291,7 +1291,10 @@ bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst_tic,
         if (!src_base || !dst_base) {
             return fail("no subresource at the TIC address");
         }
-        const PixelFormat src_format = slot_images[src_id].info.format;
+        // Sample the input as its TIC says: a game can write one format's bits into an image the
+        // cache made with another of the same size (Ocarina of Time packs E5B9G9R9 colour into an
+        // image first seen as B10G11R11), and reading it with the image's format scrambles it.
+        const PixelFormat src_format = src_info.format;
         const PixelFormat dst_format = slot_images[dst_id].info.format;
         const ImageViewId src_view_id = FindOrEmplaceImageView(
             src_id, ImageViewInfo(ImageViewType::e2D, src_format,
@@ -1314,8 +1317,9 @@ bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst_tic,
                           Tegra::Engines::Fermi2D::Operation::SrcCopy);
         static bool logged{};
         if (!std::exchange(logged, true)) {
-            LOG_INFO(HW_GPU, "TIC image copy: {:#x} {} into {:#x} {}", src.Address(),
-                     static_cast<u32>(src_format), dst.Address(),
+            LOG_INFO(HW_GPU, "TIC image copy: {:#x} {} (image {}) into {:#x} {}", src.Address(),
+                     static_cast<u32>(src_format),
+                     static_cast<u32>(slot_images[src_id].info.format), dst.Address(),
                      static_cast<u32>(dst_format));
         }
         return true;
