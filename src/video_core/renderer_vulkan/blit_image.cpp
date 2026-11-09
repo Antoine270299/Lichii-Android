@@ -257,6 +257,16 @@ constexpr VkPipelineDynamicStateCreateInfo PIPELINE_DYNAMIC_STATE_CREATE_INFO{
     .dynamicStateCount = static_cast<u32>(DYNAMIC_STATES.size()),
     .pDynamicStates = DYNAMIC_STATES.data(),
 };
+// Without blend constants: a colour-scaled blit bakes its constants into the pipeline.
+constexpr std::array STATIC_BLEND_DYNAMIC_STATES{VK_DYNAMIC_STATE_VIEWPORT,
+                                                 VK_DYNAMIC_STATE_SCISSOR};
+constexpr VkPipelineDynamicStateCreateInfo STATIC_BLEND_DYNAMIC_STATE_CREATE_INFO{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .dynamicStateCount = static_cast<u32>(STATIC_BLEND_DYNAMIC_STATES.size()),
+    .pDynamicStates = STATIC_BLEND_DYNAMIC_STATES.data(),
+};
 constexpr VkPipelineColorBlendStateCreateInfo PIPELINE_COLOR_BLEND_STATE_EMPTY_CREATE_INFO{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
     .pNext = nullptr,
@@ -1488,7 +1498,8 @@ VkPipeline BlitImageHelper::FindOrEmplaceColorPipeline(const BlitImagePipelineKe
         .pMultisampleState = &PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .pDepthStencilState = nullptr,
         .pColorBlendState = &color_blend_create_info,
-        .pDynamicState = &PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .pDynamicState = scaled ? &STATIC_BLEND_DYNAMIC_STATE_CREATE_INFO
+                                : &PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .layout = *one_texture_pipeline_layout,
         .renderPass = key.renderpass,
         .subpass = 0,
