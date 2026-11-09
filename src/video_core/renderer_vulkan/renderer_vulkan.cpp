@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <chrono>
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <string>
@@ -231,6 +233,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     }
 
     RenderScreenshot(framebuffers);
+    DebugPresentDump(framebuffers);
     const auto acquiring = trace ? std::chrono::steady_clock::now()
                                  : std::chrono::steady_clock::time_point{};
     Frame* frame = present_manager.GetRenderFrame();
@@ -303,6 +306,49 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
         }
         trace_last_frame = entered;
     }
+}
+
+// EDEN_NX2_PRESENT_DUMP=<folder> renders the presentation path (layer + window adapt) into an
+// offscreen image 20, 40 and 60 seconds after the first frame and writes each one as a PPM.
+// A clean picture there means the corruption comes from the swapchain side.
+void RendererVulkan::DebugPresentDump(std::span<const Tegra::FramebufferConfig> framebuffers) {
+    static const char* const dir = std::getenv("EDEN_NX2_PRESENT_DUMP");
+    if (dir == nullptr) {
+        return;
+    }
+    static const auto start = std::chrono::steady_clock::now();
+    static int written = 0;
+    if (written >= 3) {
+        return;
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    if (elapsed < std::chrono::seconds{20 * (written + 1)}) {
+        return;
+    }
+    ++written;
+    const auto layout = render_window.GetFramebufferLayout();
+    const VkDeviceSize size = VkDeviceSize{layout.width} * layout.height * 4;
+    const auto buffer = RenderToBuffer(framebuffers, layout, VK_FORMAT_R8G8B8A8_UNORM, size);
+    const auto data = buffer.Mapped();
+    const std::string path = fmt::format("{}/present_{}.ppm", dir, written);
+    std::FILE* const file = std::fopen(path.c_str(), "wb");
+    if (file == nullptr) {
+        LOG_ERROR(Render_Vulkan, "Present dump: cannot open {}", path);
+        return;
+    }
+    std::fprintf(file, "P6\n%u %u\n255\n", layout.width, layout.height);
+    std::vector<u8> row(static_cast<size_t>(layout.width) * 3);
+    for (u32 y = 0; y < layout.height; ++y) {
+        const u8* const src = data.data() + static_cast<size_t>(y) * layout.width * 4;
+        for (u32 x = 0; x < layout.width; ++x) {
+            row[x * 3 + 0] = src[x * 4 + 0];
+            row[x * 3 + 1] = src[x * 4 + 1];
+            row[x * 3 + 2] = src[x * 4 + 2];
+        }
+        std::fwrite(row.data(), 1, row.size(), file);
+    }
+    std::fclose(file);
+    LOG_INFO(Render_Vulkan, "Present dump: wrote {} ({}x{})", path, layout.width, layout.height);
 }
 
 void RendererVulkan::Report() const {
