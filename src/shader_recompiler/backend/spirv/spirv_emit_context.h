@@ -367,6 +367,11 @@ public:
 
     std::array<Id, 2> software_matrix_functions{};
     std::vector<Id> interfaces;
+    /// Storage buffer bases of native global memory, computed once at the start of main.
+    std::vector<Id> global_base_vars;
+    const Info* global_base_info{};
+    Id GlobalBaseAddress(const Info& info, size_t index);
+    void InitGlobalMemoryBases();
     std::vector<std::pair<u32, spv::Op>> opcode_rewrites;
 
     // Task and mesh programs. Their stage buffer: the task's output region is the task payload

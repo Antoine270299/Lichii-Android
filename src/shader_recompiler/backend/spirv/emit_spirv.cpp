@@ -167,11 +167,15 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
         switch (node.type) {
         case IR::AbstractSyntaxNode::Type::Block: {
             const Id label{node.data.block->Definition<Id>()};
+            const bool first_block{current_block == nullptr};
             if (current_block) {
                 ctx.OpBranch(label);
             }
             current_block = node.data.block;
             ctx.AddLabel(label);
+            if (first_block) {
+                ctx.InitGlobalMemoryBases();
+            }
             for (IR::Inst& inst : node.data.block->Instructions()) {
                 EmitInst(ctx, &inst);
             }
