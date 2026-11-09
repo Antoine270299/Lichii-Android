@@ -131,9 +131,7 @@ public:
 
     /// Colour blit with the colour multiplied by scale (see BlitImageHelper::BlitColorScaled).
     void BlitColorScaled(Framebuffer* dst_framebuffer, ImageView& src, const Region2D& dst_region,
-                         const Region2D& src_region, float scale) {
-        blit_image_helper.BlitColorScaled(dst_framebuffer, src, dst_region, src_region, scale);
-    }
+                         const Region2D& src_region, float scale);
 
     void BlitImage(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& src,
                    const Region2D& dst_region, const Region2D& src_region,
