@@ -365,6 +365,8 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
 
     images = swapchain.GetImages();
     image_count = static_cast<u32>(images.size());
+    LOG_INFO(Render_Vulkan, "Swapchain extent {}x{}, {} images, transform {:#x}", extent.width,
+             extent.height, image_count, static_cast<u32>(swapchain_ci.preTransform));
 #ifdef __ANDROID__
     // Android is already ordered the same as Switch.
     image_view_format = VK_FORMAT_R8G8B8A8_UNORM;

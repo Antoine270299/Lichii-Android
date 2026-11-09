@@ -25,6 +25,12 @@ bool CitronPresent() {
     static const bool enabled = std::getenv("EDEN_NX2_CITRON_PRESENT") != nullptr;
     return enabled;
 }
+// EDEN_NX2_PLAIN_FRAME=1 creates present frames like the offscreen capture image (no mutable
+// format, no extended usage), which renders cleanly on Turnip.
+bool PlainFrame() {
+    static const bool enabled = std::getenv("EDEN_NX2_PLAIN_FRAME") != nullptr;
+    return enabled;
+}
 } // Anonymous namespace
 
 
@@ -234,6 +240,7 @@ void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat
     // source and colour attachment), to test the frame layout Turnip picks on Adreno 8xx.
     const bool citron_frame = CitronPresent() && !with_storage;
     const VkImageCreateFlags frame_flags =
+        PlainFrame() ? VkImageCreateFlags{0} :
         citron_frame ? VkImageCreateFlags{VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT}
                      : VkImageCreateFlags{VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
                                           VK_IMAGE_CREATE_EXTENDED_USAGE_BIT};
@@ -268,6 +275,8 @@ void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     });
 
+    LOG_INFO(Render_Vulkan, "Present frame {}x{} flags {:#x} usage {:#x} view format {}", width,
+             height, frame_flags, frame_usage, static_cast<int>(image_view_format));
     frame->image_view = dld.CreateImageView({
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .pNext = nullptr,
