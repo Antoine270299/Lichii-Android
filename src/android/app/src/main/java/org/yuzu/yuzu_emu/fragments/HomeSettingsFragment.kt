@@ -483,14 +483,37 @@ class HomeSettingsFragment : Fragment() {
             )
         )!!
 
-        val intent = Intent(Intent.ACTION_SEND)
-            .setDataAndType(currentLog.uri, FileUtil.TEXT_PLAIN)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        if (!Log.gameLaunched && oldLog.exists()) {
-            intent.putExtra(Intent.EXTRA_STREAM, oldLog.uri)
-            startActivity(Intent.createChooser(intent, getText(R.string.share_log)))
+        // The logcat that EDEN_NX2_LOGCAT streams next to the user folder, shared along with the
+        // log when present: it holds the driver's and Android's messages, crash reports included.
+        val logcat = DocumentFile.fromSingleUri(
+            mainActivity,
+            DocumentsContract.buildDocumentUri(
+                DocumentProvider.AUTHORITY,
+                "${DocumentProvider.ROOT_ID}/logcat.txt"
+            )
+        )!!
+        val log = if (!Log.gameLaunched && oldLog.exists()) {
+            oldLog
         } else if (currentLog.exists()) {
-            intent.putExtra(Intent.EXTRA_STREAM, currentLog.uri)
+            currentLog
+        } else {
+            null
+        }
+        if (log != null) {
+            val uris = arrayListOf(log.uri)
+            if (logcat.exists()) {
+                uris.add(logcat.uri)
+            }
+            val intent = if (uris.size == 1) {
+                Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, log.uri)
+            } else {
+                Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(
+                    Intent.EXTRA_STREAM,
+                    uris
+                )
+            }
+            intent.setType(FileUtil.TEXT_PLAIN)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             startActivity(Intent.createChooser(intent, getText(R.string.share_log)))
         } else {
             Toast.makeText(
