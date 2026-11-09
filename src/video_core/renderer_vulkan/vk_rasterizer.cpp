@@ -30,6 +30,7 @@
 #include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
+#include "video_core/ocarina_movie.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 #include "video_core/control/channel_state.h"
@@ -431,6 +432,9 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         report_failure("no pipeline");
         TraceRenderState(is_indexed, "no-pipeline", nullptr);
         return;
+    }
+    if (Settings::GetCurrentProgramID() == VideoCommon::OcarinaMovie::ProgramId) {
+        TrackOcarinaTonemappedImage(*pipeline);
     }
     // Task/mesh pipelines: the draw's vertex count is the number of task workgroups.
     mesh_draw = pipeline->IsMeshPipeline();
@@ -3275,4 +3279,32 @@ void RasterizerVulkan::ReleaseChannel(s32 channel_id) {
     query_cache.EraseChannel(channel_id);
 }
 
+void RasterizerVulkan::TrackOcarinaTonemappedImage(const GraphicsPipeline& pipeline) {
+    const auto& hashes = pipeline.ShaderHashes();
+    if (std::none_of(hashes.begin(), hashes.end(), VideoCommon::OcarinaMovie::IsTonemapShader)) {
+        return;
+    }
+    const auto& target = maxwell3d->regs.rt[0];
+    if (target.Address() == 0) {
+        return;
+    }
+    using VideoCommon::OcarinaMovie::tonemapped_image;
+    std::scoped_lock lock{VideoCommon::OcarinaMovie::tonemapped_mutex};
+    if (tonemapped_image.address != target.Address()) {
+        LOG_INFO(Render_Vulkan, "Ocarina of Time: tonemapped image at {:#x} {}x{} format {}",
+                 target.Address(), target.width, target.height, static_cast<u32>(target.format));
+    }
+    tonemapped_image = {
+        .address = target.Address(),
+        .width = target.width,
+        .height = target.height,
+        .format = static_cast<u32>(target.format),
+        .block_width = target.tile_mode.block_width.Value(),
+        .block_height = target.tile_mode.block_height.Value(),
+        .block_depth = target.tile_mode.block_depth.Value(),
+        .pitch_linear = target.tile_mode.is_pitch_linear.Value() != 0,
+    };
+}
+
 } // namespace Vulkan
+

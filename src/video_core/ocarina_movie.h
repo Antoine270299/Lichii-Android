@@ -5,6 +5,8 @@
 
 #include <array>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
 #include "common/common_types.h"
 
 // Ocarina of Time shows its pre-rendered movies through a compute chain: one pass turns the
@@ -40,5 +42,34 @@ constexpr u32 GameplayFilterOutputOffset = 0xd0;
 constexpr bool IsNetwork(u64 native_key) {
     return std::ranges::find(NetworkKeys, native_key) != NetworkKeys.end();
 }
+
+
+// Gameplay anti-aliasing (after zortos293/Lichii docs/nx2/oot-network-bypass.md): the game
+// tonemaps the scene into a B10G11R11 render target, then runs a prepass, a tensor network and an
+// output pass (GameplayFilterKey) that writes the image the rest of the frame uses. The output
+// pass is replaced by a point copy of the tonemapped image, and the prepass and the network are
+// skipped while it is.
+constexpr u64 GameplayPrepassKey = 0x8475d671e6967428ULL;
+constexpr u64 GameplayNetworkKey = 0x42593194bb0b2b32ULL;
+constexpr bool IsTonemapShader(u64 hash) {
+    return hash == 0xbded5ce917183214ULL || // outdoors
+           hash == 0x6cb06edf14be1d79ULL || // indoors
+           hash == 0x3ac011bd2d772994ULL;   // outdoors at another time of day
+}
+/// Render target 0 of the latest tonemap draw, written by the rasterizer, read by the compute
+/// engine (address 0 until one is seen).
+struct TonemappedImage {
+    u64 address{};
+    u32 width{};
+    u32 height{};
+    u32 format{}; ///< Tegra::RenderTargetFormat
+    u32 block_width{};
+    u32 block_height{};
+    u32 block_depth{};
+    bool pitch_linear{};
+};
+inline std::mutex tonemapped_mutex;
+inline TonemappedImage tonemapped_image;
+inline std::atomic<bool> gameplay_output_replaced{};
 
 } // namespace VideoCommon::OcarinaMovie

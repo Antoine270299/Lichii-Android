@@ -1342,46 +1342,93 @@ bool KeplerCompute::ProcessOcarinaFilter(u64 program_id, u64 native_key) {
         const char* const value = std::getenv("EDEN_NX2_OCARINA_FILTER");
         return value && std::string_view{value} == "native";
     }();
-    // A copy can be refused while the images settle; give up after a few refusals.
-    static u32 failures = 0;
-    if (native && program_id == ProgramId && native_key == GameplayFilterKey) {
-        DumpOcarinaFilterPair();
-    }
-    if (native || failures >= 8 || program_id != ProgramId || native_key != GameplayFilterKey) {
+    if (program_id != ProgramId) {
         return false;
     }
-    const auto input = ComputeImageHandle(GameplayFilterInputOffset);
+    if (native) {
+        if (native_key == GameplayFilterKey) {
+            DumpOcarinaFilterPair();
+        }
+        return false;
+    }
+    // The tonemap pass draws before the network every frame; until it has been seen (menus, the
+    // first frame) the network runs as usual. The prepass and the network are skipped only while
+    // the output pass is replaced, so a failed copy brings the whole network back next frame.
+    TonemappedImage tonemapped;
+    {
+        std::scoped_lock lock{tonemapped_mutex};
+        tonemapped = tonemapped_image;
+    }
+    if (tonemapped.address == 0) {
+        return false;
+    }
+    if (native_key == GameplayPrepassKey || native_key == GameplayNetworkKey) {
+        return gameplay_output_replaced.load(std::memory_order_relaxed);
+    }
+    if (native_key != GameplayFilterKey) {
+        return false;
+    }
     const auto output = ComputeImageHandle(GameplayFilterOutputOffset);
-    const bool usable = input && output && input->Address() != 0 && output->Address() != 0 &&
-                        input->Address() != output->Address() &&
-                        input->Width() == output->Width() && input->Height() == output->Height();
-    // The game's filter also brings the scene colour to the exposure its tone mapping expects;
-    // the copy approximates that with a fixed scale (EDEN_NX2_OCARINA_EXPOSURE, default 0.6).
-    static const float exposure = [] {
-        const char* const value = std::getenv("EDEN_NX2_OCARINA_EXPOSURE");
-        const float parsed = value ? std::strtof(value, nullptr) : 0.6f;
-        return parsed > 0.0f && parsed < 16.0f ? parsed : 0.6f;
-    }();
-    if (!usable || !rasterizer->AccelerateTicImageCopy(*output, *input, exposure)) {
-        ++failures;
-        LOG_WARNING(HW_GPU,
-                    "Ocarina of Time filter: the copy is unavailable (input {:#x} {}x{} format {}, "
-                    "output {:#x} {}x{} format {}); the filter runs natively",
-                    input ? input->Address() : 0, input ? input->Width() : 0,
-                    input ? input->Height() : 0,
-                    input ? static_cast<u32>(input->format.Value()) : 0,
-                    output ? output->Address() : 0, output ? output->Width() : 0,
-                    output ? output->Height() : 0,
-                    output ? static_cast<u32>(output->format.Value()) : 0);
+    if (!output || output->format != Texture::TextureFormat::B10G11R11 || output->Address() == 0 ||
+        output->Address() == tonemapped.address || !output->IsBlockLinear() ||
+        tonemapped.format != static_cast<u32>(Tegra::RenderTargetFormat::B10G11R11_FLOAT) ||
+        tonemapped.pitch_linear || tonemapped.width != output->Width() ||
+        tonemapped.height != output->Height()) {
+        gameplay_output_replaced.store(false, std::memory_order_relaxed);
+        static bool warned = false;
+        if (!std::exchange(warned, true)) {
+            LOG_WARNING(HW_GPU,
+                        "Ocarina of Time filter: unexpected images, not replaced (tonemapped "
+                        "{:#x} {}x{} format {}, output {})",
+                        tonemapped.address, tonemapped.width, tonemapped.height, tonemapped.format,
+                        output ? fmt::format("{:#x} {}x{} format {}", output->Address(),
+                                             output->Width(), output->Height(),
+                                             static_cast<u32>(output->format.Value()))
+                               : std::string{"unreadable"});
+        }
         return false;
     }
+    Fermi2D::Surface destination{};
+    destination.format = Tegra::RenderTargetFormat::B10G11R11_FLOAT;
+    destination.linear = Fermi2D::MemoryLayout::BlockLinear;
+    destination.block_width.Assign(output->block_width);
+    destination.block_height.Assign(output->block_height);
+    destination.block_depth.Assign(output->block_depth);
+    destination.depth = 1;
+    destination.width = output->Width();
+    destination.height = output->Height();
+    destination.addr_upper = static_cast<u32>(output->Address() >> 32);
+    destination.addr_lower = static_cast<u32>(output->Address());
+    Fermi2D::Surface source = destination;
+    source.block_width.Assign(tonemapped.block_width);
+    source.block_height.Assign(tonemapped.block_height);
+    source.block_depth.Assign(tonemapped.block_depth);
+    source.addr_upper = static_cast<u32>(tonemapped.address >> 32);
+    source.addr_lower = static_cast<u32>(tonemapped.address);
+    const s32 width = static_cast<s32>(output->Width());
+    const s32 height = static_cast<s32>(output->Height());
+    const Fermi2D::Config config{
+        .operation = Fermi2D::Operation::SrcCopy,
+        .filter = Fermi2D::Filter::Point,
+        .must_accelerate = true,
+        .dst_x0 = 0,
+        .dst_y0 = 0,
+        .dst_x1 = width,
+        .dst_y1 = height,
+        .src_x0 = 0,
+        .src_y0 = 0,
+        .src_x1 = width,
+        .src_y1 = height,
+    };
+    const bool copied = rasterizer->AccelerateSurfaceCopy(source, destination, config);
+    gameplay_output_replaced.store(copied, std::memory_order_relaxed);
     static bool logged = false;
     if (!std::exchange(logged, true)) {
-        LOG_INFO(HW_GPU, "Ocarina of Time filter: scene colour {:#x} {}x{} copied into {:#x} in "
-                         "place of the tensor filter",
-                 input->Address(), input->Width(), input->Height(), output->Address());
+        LOG_INFO(HW_GPU, "Ocarina of Time filter: {} {:#x} -> {:#x} {}x{}",
+                 copied ? "network bypassed, tonemapped image copied" : "copy failed",
+                 tonemapped.address, output->Address(), width, height);
     }
-    return true;
+    return copied;
 }
 
 void KeplerCompute::ProcessLaunch() {
