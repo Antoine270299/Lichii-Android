@@ -683,6 +683,65 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         properties.properties.limits.maxVertexInputBindings = 32;
     }
 
+    // EDEN_NX2_STRIP=<groups> turns off groups of device features Citron never enables, to find
+    // the one that makes Turnip on Adreno 8xx corrupt the presented image. Groups, comma
+    // separated: sync2, bda, descbuf, maint, robust, indexing, misc, or all.
+    if (const char* strip_env = std::getenv("EDEN_NX2_STRIP")) {
+        const std::string strip{strip_env};
+        const auto wants = [&strip](const char* group) {
+            return strip.find("all") != std::string::npos ||
+                   strip.find(group) != std::string::npos;
+        };
+        if (wants("sync2")) {
+            RemoveExtensionFeature(extensions.synchronization2, features.synchronization2,
+                                   VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+        }
+        if (wants("bda")) {
+            RemoveExtensionFeature(extensions.buffer_device_address,
+                                   features.buffer_device_address,
+                                   VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+        }
+        if (wants("descbuf")) {
+            RemoveExtensionFeature(extensions.descriptor_buffer, features.descriptor_buffer,
+                                   VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+        }
+        if (wants("maint")) {
+            RemoveExtensionFeature(extensions.maintenance4, features.maintenance4,
+                                   VK_KHR_MAINTENANCE_4_EXTENSION_NAME);
+            RemoveExtensionFeature(extensions.maintenance5, features.maintenance5,
+                                   VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
+            RemoveExtensionFeature(extensions.maintenance6, features.maintenance6,
+                                   VK_KHR_MAINTENANCE_6_EXTENSION_NAME);
+            RemoveExtension(extensions.maintenance7, VK_KHR_MAINTENANCE_7_EXTENSION_NAME);
+            RemoveExtension(extensions.maintenance8, VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+        }
+        if (wants("robust")) {
+            RemoveExtensionFeature(extensions.robustness_2, features.robustness2,
+                                   VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+            loaded_extensions.erase(VK_KHR_ROBUSTNESS_2_EXTENSION_NAME);
+            RemoveExtensionFeature(extensions.robust_image_access, features.robust_image_access,
+                                   VK_EXT_IMAGE_ROBUSTNESS_EXTENSION_NAME);
+        }
+        if (wants("indexing")) {
+            RemoveExtensionFeature(extensions.descriptor_indexing, features.descriptor_indexing,
+                                   VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+        }
+        if (wants("misc")) {
+            RemoveExtensionFeature(extensions.color_write_enable, features.color_write_enable,
+                                   VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
+            RemoveExtensionFeature(extensions.border_color_swizzle, features.border_color_swizzle,
+                                   VK_EXT_BORDER_COLOR_SWIZZLE_EXTENSION_NAME);
+            RemoveExtensionFeature(extensions.mesh_shader, features.mesh_shader,
+                                   VK_EXT_MESH_SHADER_EXTENSION_NAME);
+            RemoveExtensionFeature(extensions.shader_quad_control, features.shader_quad_control,
+                                   VK_KHR_SHADER_QUAD_CONTROL_EXTENSION_NAME);
+            RemoveExtensionFeature(extensions.shader_maximal_reconvergence,
+                                   features.shader_maximal_reconvergence,
+                                   VK_KHR_SHADER_MAXIMAL_RECONVERGENCE_EXTENSION_NAME);
+        }
+        LOG_WARNING(Render_Vulkan, "EDEN_NX2_STRIP={}: device features turned off", strip);
+    }
+
     const auto dyna_state = Settings::values.dyna_state.GetValue();
     switch (dyna_state) {
     case Settings::ExtendedDynamicState::Disabled:
