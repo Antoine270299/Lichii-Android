@@ -1282,10 +1282,26 @@ bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst_tic,
             if (slot_images[id].info.num_samples != 1) {
                 return fail("multisampled image");
             }
-            if (True(slot_images[id].flags & ImageFlagBits::Rescaled)) {
-                return fail("rescaled image");
-            }
         }
+        // With resolution scaling, bring both images to the same scale and copy scaled regions.
+        Image& src_image = slot_images[src_id];
+        Image& dst_image = slot_images[dst_id];
+        bool is_src_rescaled = True(src_image.flags & ImageFlagBits::Rescaled);
+        bool is_dst_rescaled = True(dst_image.flags & ImageFlagBits::Rescaled);
+        if (is_src_rescaled != is_dst_rescaled) {
+            if (ImageCanRescale(src_image)) {
+                ScaleUp(src_image);
+            }
+            if (ImageCanRescale(dst_image)) {
+                ScaleUp(dst_image);
+            }
+            is_src_rescaled = True(src_image.flags & ImageFlagBits::Rescaled);
+            is_dst_rescaled = True(dst_image.flags & ImageFlagBits::Rescaled);
+        }
+        if (is_src_rescaled != is_dst_rescaled) {
+            return fail("images at different resolution scales");
+        }
+        const bool rescaled = is_src_rescaled;
         const std::optional src_base = slot_images[src_id].TryFindBase(src.Address());
         const std::optional dst_base = slot_images[dst_id].TryFindBase(dst.Address());
         if (!src_base || !dst_base) {
@@ -1302,13 +1318,17 @@ bool TextureCache<P>::CopyTicImage(const Tegra::Texture::TICEntry& dst_tic,
         const auto [dst_framebuffer_id, dst_view_id] = RenderTargetFromImage(
             dst_id, ImageViewInfo(ImageViewType::e2D, dst_format,
                                   SubresourceRange{.base = *dst_base, .extent = {1, 1}}));
+        const auto& resolution = Settings::values.resolution_info;
+        const auto scaled = [&](u32 value) {
+            return static_cast<s32>(rescaled ? resolution.ScaleUp(value) : value);
+        };
         const Region2D src_region{
             Offset2D{.x = 0, .y = 0},
-            Offset2D{.x = static_cast<s32>(src.Width()), .y = static_cast<s32>(src.Height())},
+            Offset2D{.x = scaled(src.Width()), .y = scaled(src.Height())},
         };
         const Region2D dst_region{
             Offset2D{.x = 0, .y = 0},
-            Offset2D{.x = static_cast<s32>(dst.Width()), .y = static_cast<s32>(dst.Height())},
+            Offset2D{.x = scaled(dst.Width()), .y = scaled(dst.Height())},
         };
         Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
         runtime.BlitImage(dst_framebuffer, slot_image_views[dst_view_id],
