@@ -1034,7 +1034,6 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
                                auto&& callback) {
         AddLabel();
         const size_t num_buffers{info.storage_buffers_descriptors.size()};
-        const u64 ssbo_align_mask{~(profile.min_ssbo_alignment - 1U)};
         const auto base_address{[&](size_t index) {
             // Cached at the start of main (EmitPrologue): the bases are the same for every
             // access, and recomputing them reloads the pointer table at every access.
