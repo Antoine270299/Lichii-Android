@@ -312,25 +312,22 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     }
 }
 
-// EDEN_NX2_LOGCAT=<folder> saves this process's logcat (where Turnip and the Android graphics
-// stack report how they set up the swapchain buffers) 20 seconds after the first frame.
+// EDEN_NX2_LOGCAT=<folder> streams this app's logcat (where Turnip, the Android graphics stack
+// and crash reports write) into <folder>/logcat.txt from the first frame on, so it survives a
+// crash of the emulator.
 void RendererVulkan::DebugLogcatDump() {
 #ifdef __ANDROID__
     static const char* const dir = std::getenv("EDEN_NX2_LOGCAT");
-    if (dir == nullptr) {
+    static bool started = false;
+    if (dir == nullptr || started) {
         return;
     }
-    static const auto start = std::chrono::steady_clock::now();
-    static bool written = false;
-    if (written || std::chrono::steady_clock::now() - start < std::chrono::seconds{20}) {
-        return;
-    }
-    written = true;
+    started = true;
     const std::string path = fmt::format("{}/logcat.txt", dir);
     const std::string command =
-        fmt::format("logcat -d -v threadtime --pid={} > \"{}\" 2>&1", getpid(), path);
+        fmt::format("logcat -c; logcat -v threadtime -f \"{}\" &", path);
     const int result = std::system(command.c_str());
-    LOG_INFO(Render_Vulkan, "Logcat dump: wrote {} (result {})", path, result);
+    LOG_INFO(Render_Vulkan, "Logcat stream: writing {} (result {})", path, result);
 #endif
 }
 
