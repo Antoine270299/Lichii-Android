@@ -10,7 +10,6 @@
 #include <deque>
 #include <memory>
 #include <optional>
-#include <source_location>
 #include <span>
 
 #include "video_core/texture_cache/texture_cache_base.h"
@@ -86,7 +85,7 @@ public:
                                  DescriptorPool& descriptor_pool,
                                  ComputePassDescriptorQueue& compute_pass_descriptor_queue);
 
-    void Finish(std::source_location location = std::source_location::current());
+    void Finish();
 
     StagingBufferRef UploadStagingBuffer(size_t size, bool deferred = false);
 
@@ -135,10 +134,6 @@ public:
     [[nodiscard]] VkImage AcquireMsaaScratchImage(const VkImageCreateInfo& image_ci);
 
     void ReleaseMsaaScratchImage(VkImage image);
-
-    /// Colour blit with the colour multiplied by scale (see BlitImageHelper::BlitColorScaled).
-    void BlitColorScaled(Framebuffer* dst_framebuffer, ImageView& src, const Region2D& dst_region,
-                         const Region2D& src_region, float scale);
 
     void BlitImage(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& src,
                    const Region2D& dst_region, const Region2D& src_region,

@@ -366,11 +366,6 @@ public:
                    const Tegra::Engines::Fermi2D::Surface& src,
                    const Tegra::Engines::Fermi2D::Config& copy);
 
-    /// Copies the image a TIC entry describes into another one (bilinear, formats converted), in
-    /// place of a compute pass that would write dst from src. False when it can't.
-    bool CopyTicImage(const Tegra::Texture::TICEntry& dst, const Tegra::Texture::TICEntry& src,
-                      float color_scale = 1.0f);
-
     /// Stand-in for a DLSS evaluation: temporal upscale of src into dst (see the runtime's
     /// TemporalUpscale). False when unsupported; the caller retains its native dispatch.
     bool TemporalUpscale(const Tegra::Engines::Fermi2D::Surface& dst,
@@ -669,7 +664,6 @@ private:
     bool clearing_render_targets = false;
     bool is_rescaling = false;
     u64 total_used_memory = 0;
-    u64 logged_memory_step = 0;
     u64 minimum_memory;
     u64 expected_memory;
     u64 critical_memory;

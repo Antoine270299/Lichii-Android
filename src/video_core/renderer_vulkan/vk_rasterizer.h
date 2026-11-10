@@ -158,8 +158,6 @@ public:
         const Tegra::Engines::Fermi2D::Surface& src,
         const Tegra::Engines::Fermi2D::Surface& dst) override;
     void TrackOcarinaTonemappedImage(const GraphicsPipeline& pipeline);
-    bool AccelerateTicImageCopy(const Tegra::Texture::TICEntry& dst,
-                                const Tegra::Texture::TICEntry& src, float color_scale);
     bool AccelerateTemporalUpscale(const Tegra::Engines::Fermi2D::Surface& src,
                                    const Tegra::Engines::Fermi2D::Surface& dst,
                                    const Tegra::Engines::Fermi2D::Surface& motion_vectors,
