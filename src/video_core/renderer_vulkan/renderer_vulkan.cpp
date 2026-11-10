@@ -212,6 +212,8 @@ try
         .api = "Vulkan",
     };
     Report();
+    // Start the logcat stream here too, so a game that never presents still leaves a log.
+    DebugLogcatDump();
 } catch (const vk::Exception& exception) {
     LOG_ERROR(Render_Vulkan, "Vulkan initialization failed with error: {}", exception.what());
     throw std::runtime_error{fmt::format("Vulkan initialization error {}", exception.what())};
@@ -323,7 +325,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 }
 
 // EDEN_NX2_LOGCAT=<folder> streams this app's logcat (where Turnip, the Android graphics stack
-// and crash reports write) into <folder>/logcat.txt from the first frame on, so it survives a
+// and crash reports write) into <folder>/logcat.txt from renderer start on, so it survives a
 // crash of the emulator.
 void RendererVulkan::DebugLogcatDump() {
 #ifdef __ANDROID__
