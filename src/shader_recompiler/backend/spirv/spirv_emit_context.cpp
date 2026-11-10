@@ -1006,9 +1006,27 @@ void EmitContext::InitGlobalMemoryBases() {
     if (global_base_info == nullptr) {
         return;
     }
+    const size_t num_buffers{global_base_types.size() / 2};
     global_base_args.clear();
-    for (size_t index = 0; index < global_base_types.size(); ++index) {
+    for (size_t index = 0; index < num_buffers; ++index) {
         global_base_args.push_back(GlobalBaseAddress(*global_base_info, index));
+    }
+    // A buffer extends up to the next base above its own. Buffers with equal bases get equal
+    // extents and the lowest index is tested first, as the full search picks it.
+    const Id max{Constant(U64, ~u64{0})};
+    for (size_t index = 0; index < num_buffers; ++index) {
+        const Id base{global_base_args[index]};
+        Id next{max};
+        for (size_t other = 0; other < num_buffers; ++other) {
+            if (other == index) {
+                continue;
+            }
+            const Id candidate{global_base_args[other]};
+            const Id closer{OpLogicalAnd(U1, OpUGreaterThan(U1, candidate, base),
+                                         OpULessThan(U1, candidate, next))};
+            next = OpSelect(U64, closer, candidate, next);
+        }
+        global_base_args.push_back(OpISub(U64, next, base));
     }
 }
 
@@ -1027,7 +1045,8 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
     const Id zero{u32_zero_value};
     static const bool no_base_cache{std::getenv("EDEN_NX2_NO_GLOBAL_BASE_CACHE") != nullptr};
     if (info.native_global_bounds && !no_base_cache) {
-        global_base_types.assign(info.storage_buffers_descriptors.size(), U64);
+        // One base and one extent per buffer.
+        global_base_types.assign(info.storage_buffers_descriptors.size() * 2, U64);
         global_base_info = &info;
     }
     // Function types and parameters carry the bases after the regular parameters.
@@ -1052,7 +1071,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         const auto base_address{[&](size_t index) {
             // Computed once at the start of main and passed in: recomputing them reloads the
             // pointer table at every access.
-            if (index < global_base_params.size()) {
+            if (!global_base_params.empty()) {
                 return global_base_params[index];
             }
             return GlobalBaseAddress(info, index);
@@ -1070,6 +1089,18 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             callback(ssbo_pointer, ssbo_id, ssbo_index);
             AddLabel(else_label);
         }};
+        if (info.native_global_bounds && global_base_params.size() == num_buffers * 2) {
+            // Same rule as below (the buffer whose base is the closest one at or below the
+            // address), with the extent of each buffer, up to the next base, already computed at
+            // the start of main: one subtraction and one comparison per buffer, stopping at the
+            // first match.
+            for (size_t index = 0; index < num_buffers; ++index) {
+                const Id base{global_base_params[index]};
+                const Id extent{global_base_params[num_buffers + index]};
+                access(index, base, OpULessThan(U1, OpISub(U64, addr, base), extent));
+            }
+            return;
+        }
         if (info.native_global_bounds) {
             // Native pointers carry no NVN size word. The address belongs to the candidate buffer
             // whose base is the closest one at or below it (bounds come from the binding).
