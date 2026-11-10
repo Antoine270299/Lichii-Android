@@ -391,15 +391,6 @@ public:
     std::optional<u32> tensor_scratch_word;
     Id tensor_subgroup_id{};
     std::vector<Id> interfaces;
-    /// Storage buffer bases of native global memory: computed once at the start of main
-    /// (global_base_args) and passed to the global memory functions as extra parameters.
-    std::vector<Id> global_base_args;
-    std::vector<Id> global_base_params;
-    std::vector<Id> global_base_types;
-    const Info* global_base_info{};
-    Id GlobalBaseAddress(const Info& info, size_t index);
-    void InitGlobalMemoryBases();
-    Id CallGlobal(Id result_type, Id function, std::initializer_list<Id> args);
     std::vector<std::pair<u32, spv::Op>> opcode_rewrites;
 
     // Task and mesh programs. Their stage buffer: the task's output region is the task payload
