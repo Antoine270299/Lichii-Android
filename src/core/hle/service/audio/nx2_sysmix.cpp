@@ -226,9 +226,19 @@ Result SysmixOutput::Open(u32 sample_type, u32 channels, u32 rate, u32 frames, u
                  memory.Read32Acquire(p.buffer + WriteOffset, write) && read < slots &&
                  write < slots,
              ResultInvalidAddressInfo);
-    p.host = p.sink.AcquireSinkStream(p.system, channels, "sysmix-" + std::to_string(p.id),
-                                      p.input_stream ? AudioCore::Sink::StreamType::In
-                                                     : AudioCore::Sink::StreamType::Sysmix);
+#ifdef __ANDROID__
+    // Android: the app has no microphone permission, and SDL's recording open waits for one that
+    // is never granted (Ocarina of Time froze before its first frame opening this stream).
+    // Capture silence instead.
+    if (p.input_stream) {
+        p.UseSilentInput(channels);
+    } else
+#endif
+    {
+        p.host = p.sink.AcquireSinkStream(p.system, channels, "sysmix-" + std::to_string(p.id),
+                                          p.input_stream ? AudioCore::Sink::StreamType::In
+                                                         : AudioCore::Sink::StreamType::Sysmix);
+    }
     if (p.input_stream && (!p.host || !p.host->IsReady())) {
         p.UseSilentInput(channels);
     }
