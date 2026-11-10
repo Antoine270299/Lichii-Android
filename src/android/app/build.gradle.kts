@@ -57,6 +57,9 @@ android {
     packaging {
         // This is necessary for libadrenotools custom driver loading
         jniLibs.useLegacyPackaging = true
+        // Hang diagnosis (nx2-sync test builds): keep the native symbol names so
+        // `debuggerd -b` backtraces of a frozen game name the functions.
+        jniLibs.keepDebugSymbols += "**/libyuzu-android.so"
     }
 
     androidResources {
@@ -143,7 +146,9 @@ android {
             }
 
             isMinifyEnabled = true
-            isDebuggable = false
+            // Hang diagnosis (nx2-sync test builds): debuggable, so `adb shell debuggerd -b`
+            // can dump the threads of a frozen game. Back to false before publishing.
+            isDebuggable = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
