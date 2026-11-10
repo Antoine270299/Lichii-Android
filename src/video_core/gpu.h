@@ -148,6 +148,9 @@ public:
     void FlushCommands();
     /// Synchronizes CPU writes with Host GPU memory.
     void InvalidateGPUCache();
+    /// Calls `callback` for each CPU write into GPU-written memory that InvalidateGPUCache has not
+    /// applied yet.
+    void ForEachPendingCpuWrite(const std::function<void(DAddr, size_t)>& callback);
     /// Returns true when guest CPU writes to the range are collected but not yet applied.
     [[nodiscard]] bool HasPendingCPUWrites(DAddr addr, u64 size);
     /// Signal the ending of command list.
@@ -273,9 +276,6 @@ public:
     /// Notify rasterizer that CPU is trying to write this area. It returns true if the area is
     /// sensible, false otherwise, addr and size must be a valid combination
     bool OnCPUWrite(DAddr addr, u64 size);
-
-    /// Whether the buffer cache holds GPU-written data in this range that guest memory lacks.
-    [[nodiscard]] bool HasGpuWrittenBuffers(DAddr addr, u64 size);
 
     /// Notify rasterizer that any caches of the specified region should be flushed and invalidated
     void FlushAndInvalidateRegion(DAddr addr, u64 size);

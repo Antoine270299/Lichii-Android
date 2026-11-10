@@ -7,7 +7,6 @@
 #pragma once
 
 #include <limits>
-#include <source_location>
 
 #include <boost/container/small_vector.hpp>
 
@@ -122,6 +121,10 @@ public:
         return (vertex_repack_mask & (1U << binding)) != 0;
     }
 
+    bool AnyVertexRepacked() const {
+        return vertex_repack_mask != 0;
+    }
+
     u64 CurrentTick();
 
     bool IsFree(u64 tick);
@@ -131,9 +134,23 @@ public:
     /// Waits for a submitted tick without flushing: safe on threads other than the GPU thread.
     void WaitSubmittedTick(u64 tick);
 
-    void Finish(std::source_location location = std::source_location::current());
+    void Finish();
 
-    void FinishForHostRead(std::source_location location = std::source_location::current());
+    void FinishForHostRead();
+
+    /// FinishForHostRead without the wait: submits, and returns the tick to wait for.
+    u64 SubmitForHostRead();
+
+    /// SubmitForHostRead without the submission: the copies go with the GPU thread's next one, as
+    /// a fence's do (Scheduler::DeferFlush). Returns the tick they go in.
+    u64 QueueForHostRead();
+
+    /// Waits for a SubmitForHostRead or QueueForHostRead tick, on any thread.
+    void WaitForHostRead(u64 tick);
+
+    /// Whether the host GPU completed `tick`, asking it when the tick is submitted but not known
+    /// to be done.
+    [[nodiscard]] bool IsFreeNow(u64 tick);
 
     u64 GetDeviceLocalMemory() const;
 
@@ -144,6 +161,9 @@ public:
     u32 GetUniformBufferAlignment() const;
 
     u32 GetStorageBufferAlignment() const;
+
+    /// Largest range a storage buffer binding may have
+    u64 GetMaxStorageBufferRange() const;
 
     [[nodiscard]] StagingBufferRef UploadStagingBuffer(size_t size);
 

@@ -9,6 +9,7 @@
 
 #include <ranges>
 #include "common/settings.h"
+#include "video_core/nx2_profile.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -89,6 +90,7 @@ void MasterSemaphore::Wait(u64 tick) {
             return;
         }
 
+        const VideoCommon::Nx2Profile::Scope scope{VideoCommon::Nx2Profile::Zone::GpuWait};
         u64 last_tick = gpu_tick.load(std::memory_order_relaxed);
         while (gpu_tick.load(std::memory_order_acquire) < tick) {
             gpu_tick.wait(last_tick, std::memory_order_acquire);
@@ -110,6 +112,7 @@ void MasterSemaphore::Wait(u64 tick) {
     }
 
     // If none of the above is hit, fallback to a regular wait
+    const VideoCommon::Nx2Profile::Scope scope{VideoCommon::Nx2Profile::Zone::GpuWait};
     try {
         if (HangWatchEnabled()) {
             constexpr u64 interval_ns = 3'000'000'000ULL;
@@ -134,6 +137,7 @@ void MasterSemaphore::Wait(u64 tick) {
 VkResult MasterSemaphore::SubmitQueue(vk::CommandBuffer& cmdbuf, vk::CommandBuffer& upload_cmdbuf,
                                       VkSemaphore signal_semaphore, VkSemaphore wait_semaphore,
                                       u64 host_tick) {
+    const VideoCommon::Nx2Profile::Scope scope{VideoCommon::Nx2Profile::Zone::QueueSubmit};
     if (semaphore) {
         return SubmitQueueTimeline(cmdbuf, upload_cmdbuf, signal_semaphore, wait_semaphore,
                                    host_tick);

@@ -49,13 +49,13 @@ sl::DLSSMode ModeFor(VkExtent2D render, VkExtent2D upscale) {
 }
 
 // Preset K for every mode: NVIDIA's defaults for Performance/Ultra Performance (M, L) draw thin
-// horizontal lines in Fire Emblem at 2x resolution scale. EDEN_NX2_DLSS_PRESET=J|K|L|M picks
-// another model, EDEN_NX2_DLSS_PRESET=default leaves the choice to NVIDIA.
+// horizontal lines in Fire Emblem at 2x resolution scale. EDEN_NX2_DLSS_PRESET=E|F (the CNN
+// models) or J|K|L|M picks another model, EDEN_NX2_DLSS_PRESET=default leaves the choice to
+// NVIDIA.
 sl::DLSSPreset Preset() {
     const char* const value = std::getenv("EDEN_NX2_DLSS_PRESET");
-    if (value && value[0] >= 'J' && value[0] <= 'M') {
-        return static_cast<sl::DLSSPreset>(static_cast<u32>(sl::DLSSPreset::ePresetJ) +
-                                           static_cast<u32>(value[0] - 'J'));
+    if (value && (value[0] == 'E' || value[0] == 'F' || (value[0] >= 'J' && value[0] <= 'M'))) {
+        return static_cast<sl::DLSSPreset>(value[0] - 'A' + 1);
     }
     if (value && std::string_view{value} == "default") {
         return sl::DLSSPreset::eDefault;
@@ -120,6 +120,7 @@ StreamlineDlssUpscaler::StreamlineDlssUpscaler(const Device& device_, Scheduler&
                   static_cast<int>(result));
         throw vk::Exception(VK_ERROR_FEATURE_NOT_PRESENT);
     }
+    Streamline::GetApi().get_feature_function(sl::kFeatureDLSS, "slDLSSGetState", get_state);
     point_sampler = device.GetLogical().CreateSampler(VkSamplerCreateInfo{
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .pNext = nullptr,
@@ -217,30 +218,29 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
     if (failed) {
         return false;
     }
-    bool reset = in.reset;
-    bool options_changed = false;
-    if (!output_image || in.render_size.width != render_extent.width ||
-        in.render_size.height != render_extent.height ||
-        in.upscale_size.width != upscale_extent.width ||
-        in.upscale_size.height != upscale_extent.height) {
+    const bool extent_changed = !output_image || in.render_size.width != render_extent.width ||
+                                in.render_size.height != render_extent.height ||
+                                in.upscale_size.width != upscale_extent.width ||
+                                in.upscale_size.height != upscale_extent.height;
+    const bool options_changed = extent_changed || in.hdr != hdr_input;
+    const bool reset = in.reset || options_changed;
+    if (extent_changed) {
         CreateOutput(in.upscale_size);
         render_extent = in.render_size;
         upscale_extent = in.upscale_size;
-        options_changed = true;
-        reset = true;
     }
+    hdr_input = in.hdr;
 
-    // The game's own setup (Fortune's Weave: render-size motion vectors, reversed depth). Its
-    // colour is linear and goes above 1 with no exposure passed, so by default DLSS gets the HDR
-    // path with its own auto exposure. EDEN_NX2_DLSS_HDR=0 / EDEN_NX2_DLSS_AUTO_EXPOSURE=0 turn
-    // those off.
+    // Keep the existing HDR controls for linear input such as Fortune's Weave. Tonemapped
+    // input such as Ocarina's already has its exposure applied.
     sl::DLSSOptions options{};
     options.mode = ModeFor(in.render_size, in.upscale_size);
     options.outputWidth = in.upscale_size.width;
     options.outputHeight = in.upscale_size.height;
-    options.colorBuffersHDR = EnvInt("EDEN_NX2_DLSS_HDR", 1) != 0 ? sl::eTrue : sl::eFalse;
+    options.colorBuffersHDR =
+        in.hdr && EnvInt("EDEN_NX2_DLSS_HDR", 1) != 0 ? sl::eTrue : sl::eFalse;
     options.useAutoExposure =
-        EnvInt("EDEN_NX2_DLSS_AUTO_EXPOSURE", 1) != 0 ? sl::eTrue : sl::eFalse;
+        in.hdr && EnvInt("EDEN_NX2_DLSS_AUTO_EXPOSURE", 1) != 0 ? sl::eTrue : sl::eFalse;
     const sl::DLSSPreset preset = Preset();
     options.dlaaPreset = preset;
     options.qualityPreset = preset;
@@ -249,10 +249,10 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
     options.ultraPerformancePreset = preset;
     options.ultraQualityPreset = preset;
     if (options_changed) {
-        LOG_INFO(Render_Vulkan, "NVIDIA DLSS (Streamline): {}x{} -> {}x{}, mode {}, preset {}",
+        LOG_INFO(Render_Vulkan, "NVIDIA DLSS (Streamline): {}x{} -> {}x{}, mode {}, preset {}, {}",
                  in.render_size.width, in.render_size.height, in.upscale_size.width,
-                 in.upscale_size.height, static_cast<int>(options.mode),
-                 static_cast<int>(preset));
+                 in.upscale_size.height, static_cast<int>(options.mode), static_cast<int>(preset),
+                 options.colorBuffersHDR == sl::eTrue ? "HDR" : "LDR");
     }
 
     scheduler.RequestOutsideRenderPassOperationContext();
@@ -333,7 +333,7 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
         constants.cameraFar = 1000.0f;
         constants.cameraFOV = 1.0f;
         constants.cameraAspectRatio = rw / rh;
-        constants.depthInverted = sl::eTrue;
+        constants.depthInverted = in.depth_inverted ? sl::eTrue : sl::eFalse;
         constants.cameraMotionIncluded = sl::eTrue;
         constants.motionVectors3D = sl::eFalse;
         constants.reset = reset ? sl::eTrue : sl::eFalse;
@@ -417,6 +417,16 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
         }
         if (result != VideoCommon::DlssEvaluationResult::Succeeded) {
             clear_output();
+            return;
+        }
+        // NGX doesn't report the model it picked, but its memory tells them apart: at 3840x2160
+        // output DLSS 310.9 allocates about 198 MB for presets E and F and 307 MB for J and K.
+        sl::DLSSState state{};
+        if (options_changed && get_state &&
+            reinterpret_cast<PFun_slDLSSGetState*>(get_state)(viewport, state) == sl::Result::eOk) {
+            LOG_INFO(Render_Vulkan, "NVIDIA DLSS (Streamline): preset {} allocated {:.1f} MB",
+                     static_cast<int>(options.dlaaPreset),
+                     static_cast<double>(state.estimatedVRAMUsageInBytes) / 1e6);
         }
     });
     // DLSS binds its own pipelines and descriptors on the command buffer.
