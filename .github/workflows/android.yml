@@ -107,3 +107,14 @@ jobs:
           make_latest: false
           body: Automatic test build from ${{ github.sha }}. Experimental.
           files: artifacts/*.apk
+
+      - name: Publish the zortos293 sync build for phone download
+        if: github.ref == 'refs/heads/nx2-sync'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-sync
+          name: Lichii Android test build (zortos293 sync)
+          prerelease: true
+          make_latest: false
+          body: Automatic test build of the nx2-sync branch from ${{ github.sha }}. Experimental.
+          files: artifacts/*.apk
