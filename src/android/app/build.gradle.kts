@@ -425,3 +425,11 @@ afterEvaluate {
         }
     }
 }
+
+// The SDL Java sources are copied into externals/generated/sdl by the CMake configure step:
+// Kotlin must not compile before it (a parallel build lost that race once).
+afterEvaluate {
+    tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }.configureEach {
+        dependsOn(tasks.matching { it.name.startsWith("configureCMake") })
+    }
+}
