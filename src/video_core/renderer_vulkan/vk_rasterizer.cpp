@@ -1846,7 +1846,11 @@ void RasterizerVulkan::WaitForIdle() {
 
     query_cache.NotifyWFI();
 
-    if (device.IsMoltenVK() && scheduler.IsRenderPassActive()) {
+    // EDEN_NX2_DEFER_WFI=1: on tilers each render pass break stores and reloads the tiles.
+    // Defer the wait-for-idle like the fragment barrier while a render pass is open, as on
+    // MoltenVK (test switch: Ocarina of Time ends ~160 render passes a second here on Adreno).
+    static const bool defer_wfi = std::getenv("EDEN_NX2_DEFER_WFI") != nullptr;
+    if ((device.IsMoltenVK() || defer_wfi) && scheduler.IsRenderPassActive()) {
         scheduler.DeferFragmentBarrier();
         fence_manager.SignalOrdering();
         return;
