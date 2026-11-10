@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <bit>
 #include <deque>
@@ -1607,7 +1608,10 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
     TrackingConditions conditions{program};
     StorageInfo info;
     // Without 64-bit integers the backend cannot route global accesses among bound buffers.
-    info.bind_competing_loaded = host_info.support_int64;
+    // EDEN_NX2_NO_COMPETING_BIND: test switch, keeps loaded pointers that compete with a paired
+    // cbuf pointer on the global memory path (as before zortos #410).
+    static const bool no_competing_bind{std::getenv("EDEN_NX2_NO_COMPETING_BIND") != nullptr};
+    info.bind_competing_loaded = host_info.support_int64 && !no_competing_bind;
     info.iterator_words = CollectIteratorWords(program);
     info.atomic_pointers = CollectAtomicPointers(program);
     const auto collect = [&] {

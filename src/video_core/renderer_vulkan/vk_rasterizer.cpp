@@ -326,7 +326,9 @@ const RasterizerVulkan::MeshArena& RasterizerVulkan::AcquireMeshArena() {
     }
     // A finished submission's counter holds the words its draws asked for, including those
     // that did not fit: grow later arenas to hold them.
-    const u64 max_size{(std::min)(u64{1} << 30, u64{device.GetMaxStorageBufferRange()})};
+    // 256 MiB at most per arena (1 GiB arenas, one per submission in flight, are too much for a
+    // phone's memory).
+    const u64 max_size{(std::min)(u64{256} << 20, u64{device.GetMaxStorageBufferRange()})};
     for (MeshArena& arena : mesh_arenas) {
         if (arena.counted || !scheduler.IsFree(arena.tick)) {
             continue;
@@ -629,7 +631,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         // The same group count the native path hands vkCmdDrawMeshTasksEXT (MakeDrawParams:
         // the index count for indexed draws), within the device's dispatch limit.
         const auto& draw_state{maxwell3d->draw_manager.draw_state};
-        const u32 groups{(std::min)(MakeDrawParams(draw_state, 1, is_indexed).num_vertices,
+        u32 groups{(std::min)(MakeDrawParams(draw_state, 1, is_indexed).num_vertices,
                                     device.GetMaxComputeWorkGroupCount()[0])};
         // Mesh emulation statistics: draws with and without groups, and the frames with any
         // groups (the game culls on the GPU and sets the counts itself).
@@ -669,6 +671,19 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         // With a task program the draw's groups are task workgroups. The mesh workgroups they ask
         // for are only known on the GPU, so their output goes to the submission's arena.
         const u64 block_bytes{pipeline->MeshEmulationBlockBytes()};
+        // Phone memory: one draw's output is capped (Android closed the app at Ocarina's Deku
+        // Tree when these buffers grew). Groups past the cap are not drawn.
+        constexpr u64 MAX_DRAW_OUTPUT_BYTES{64ULL << 20};
+        if (!has_task && block_bytes != 0 && u64{groups} * block_bytes > MAX_DRAW_OUTPUT_BYTES) {
+            static u64 capped{};
+            if (capped++ % 1000 == 0) {
+                LOG_WARNING(Render_Vulkan,
+                            "Mesh emulation: a draw of {} groups ({} MiB) is capped to {} MiB",
+                            groups, (u64{groups} * block_bytes) >> 20,
+                            MAX_DRAW_OUTPUT_BYTES >> 20);
+            }
+            groups = static_cast<u32>(MAX_DRAW_OUTPUT_BYTES / block_bytes);
+        }
         StagingBufferRef output{};
         u64 bytes{};
         if (has_task) {
