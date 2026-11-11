@@ -21,9 +21,11 @@ This is an independent, experimental fork. It is not affiliated with Nintendo, Q
 - **Test builds:** the [`android-latest`](https://github.com/HexNostalgia/Lichii-Android/releases/tag/android-latest) pre-release is rebuilt automatically from every change on `nx2`. Download `app-mainline-release.apk` and install it.
 - **Merge test builds:** [`android-sync`](https://github.com/HexNostalgia/Lichii-Android/releases/tag/android-sync) is built from `nx2-sync`, a merge with Zortos' latest Lichii. It is not ready for play (see below).
 
-### Required: the Turnip driver
+### Required: the patched Turnip driver
 
-This branch is developed and tested with **Mesa Turnip (whitebelyash's branch, 26.2.x)**, installed through the app's GPU driver manager. The phone's own Qualcomm driver is not supported by these changes.
+Use **[Turnip linear swapchain fix](https://github.com/HexNostalgia/AdrenoToolsDrivers/releases/tag/linear_v1)** (Mesa Turnip from whitebelyash's Adreno 8xx branch, plus one display fix), installed through the app's GPU driver manager.
+
+Why: on Android 17 with Qualcomm's new SnapAlloc allocator, Turnip can't ask Android how screen buffers are laid out and falls back to guessing. It guesses "linear", Android picks a compressed tiled layout, and every emulator using Turnip shows red bands or striped images. The patch makes Turnip ask for CPU-readable screen buffers in that fallback case, which forces the linear layout it assumes. The phone's own Qualcomm driver is not supported here (it can't run the 64-bit integer shaders Ocarina of Time needs).
 
 ## Tested on
 
@@ -34,7 +36,7 @@ This branch is developed and tested with **Mesa Turnip (whitebelyash's branch, 2
 | GPU | Adreno 840 |
 | RAM | 16 GB |
 | OS | Android 17 (One UI) |
-| GPU driver | Turnip, Mesa 26.2.99 (whitebelyash branch) |
+| GPU driver | Turnip linear swapchain fix (Mesa 26.2.99, whitebelyash branch + patch) |
 
 ## Ocarina of Time (Switch 2, v2.0.0) — status
 
