@@ -10,6 +10,8 @@
   <img src="dist/branding/lichii_icon_with_logo.png" alt="Lichii" width="600">
 </p>
 
+<p align="center"><img src="docs/brand/hexnostalgia.png" alt="HexNostalgia" width="180"></p>
+
 # Lichii for Android — Snapdragon branch
 
 **HexNostalgia's fork of [Lichii for Android](https://github.com/pavelgajdo/Lichii-Android), tuned for Snapdragon phones with Adreno 8xx GPUs.** It follows one goal: getting Switch 2 games, starting with *The Legend of Zelda: Ocarina of Time*, playable on a Snapdragon 8 Elite phone.
@@ -23,7 +25,7 @@ This is an independent, experimental fork. It is not affiliated with Nintendo, Q
 
 ### Required: the patched Turnip driver
 
-Use **[Turnip linear swapchain fix](https://github.com/HexNostalgia/AdrenoToolsDrivers/releases/tag/linear_v1)** (Mesa Turnip from whitebelyash's Adreno 8xx branch, plus one display fix), installed through the app's GPU driver manager.
+Use **HN Turnip** ([releases](https://github.com/HexNostalgia/AdrenoToolsDrivers/releases); the first build is [`linear_v1`](https://github.com/HexNostalgia/AdrenoToolsDrivers/releases/tag/linear_v1)) (Mesa Turnip from whitebelyash's Adreno 8xx branch, plus one display fix), installed through the app's GPU driver manager.
 
 Why: on Android 17 with Qualcomm's new SnapAlloc allocator, Turnip can't ask Android how screen buffers are laid out and falls back to guessing. It guesses "linear", Android picks a compressed tiled layout, and every emulator using Turnip shows red bands or striped images. The patch makes Turnip ask for CPU-readable screen buffers in that fallback case, which forces the linear layout it assumes. The phone's own Qualcomm driver is not supported here (it can't run the 64-bit integer shaders Ocarina of Time needs).
 
