@@ -18,6 +18,7 @@
 #include <span>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -319,6 +320,104 @@ void RasterizerVulkan::ReadMeshEmulationProbe() {
              probe.frame, probe.groups, triangles, degenerate, outside, bad_index, sample);
 }
 
+namespace {
+// Mesh detail by memory pressure: Android closes the app when free memory runs low (Ocarina's
+// Deku Tree with mesh emulation). Instead, mesh output gets less memory while the system is
+// short of it, and mesh draws are skipped only as a last resort; full detail comes back once
+// memory is free again.
+//   Full:  arenas up to 256 MiB, one draw's output up to 64 MiB.
+//   Light: arenas up to 96 MiB, one draw's output up to 24 MiB (foliage may thin out).
+//   Skip:  mesh draws skipped (that geometry is missing for a while, the game keeps running).
+// MemAvailable from /proc/meminfo, read at most every 250 ms. On by default on Android.
+//   EDEN_NX2_LOD=0 turns it off, =1 turns it on elsewhere.
+//   EDEN_NX2_LOD_LIGHT_MIB (default 1800) / EDEN_NX2_LOD_SKIP_MIB (default 900): thresholds;
+//   a level is left once 400 MiB more than its threshold is available.
+//   EDEN_NX2_LOD_FORCE=1|2: always Light / Skip (to test each level).
+enum class MeshDetail : u32 { Full, Light, Skip };
+
+u64 EnvMiB(const char* name, u64 fallback) {
+    const char* value = std::getenv(name);
+    return value ? std::strtoull(value, nullptr, 10) : fallback;
+}
+
+std::optional<u64> AvailableMemoryMiB() {
+    std::FILE* file = std::fopen("/proc/meminfo", "r");
+    if (!file) {
+        return std::nullopt;
+    }
+    char line[256];
+    std::optional<u64> result;
+    while (std::fgets(line, sizeof(line), file)) {
+        unsigned long long kib{};
+        if (std::sscanf(line, "MemAvailable: %llu kB", &kib) == 1) {
+            result = kib >> 10;
+            break;
+        }
+    }
+    std::fclose(file);
+    return result;
+}
+
+MeshDetail CurrentMeshDetail() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_NX2_LOD");
+#ifdef __ANDROID__
+        return !(value && value[0] == '0');
+#else
+        return value && value[0] != '0';
+#endif
+    }();
+    static const u64 forced{EnvMiB("EDEN_NX2_LOD_FORCE", 0)};
+    if (forced == 1 || forced == 2) {
+        return static_cast<MeshDetail>(forced);
+    }
+    if (!enabled) {
+        return MeshDetail::Full;
+    }
+    static const u64 light_mib{EnvMiB("EDEN_NX2_LOD_LIGHT_MIB", 1800)};
+    static const u64 skip_mib{EnvMiB("EDEN_NX2_LOD_SKIP_MIB", 900)};
+    constexpr u64 HYSTERESIS_MIB{400};
+    static MeshDetail level{MeshDetail::Full};
+    static std::chrono::steady_clock::time_point next_check{};
+    const auto now{std::chrono::steady_clock::now()};
+    if (now < next_check) {
+        return level;
+    }
+    next_check = now + std::chrono::milliseconds(250);
+    const std::optional<u64> available{AvailableMemoryMiB()};
+    if (!available) {
+        return level;
+    }
+    MeshDetail wanted;
+    if (*available < skip_mib) {
+        wanted = MeshDetail::Skip;
+    } else if (*available < light_mib) {
+        wanted = level == MeshDetail::Skip && *available < skip_mib + HYSTERESIS_MIB
+                     ? MeshDetail::Skip
+                     : MeshDetail::Light;
+    } else if (level == MeshDetail::Full || *available >= light_mib + HYSTERESIS_MIB) {
+        wanted = MeshDetail::Full;
+    } else {
+        wanted = MeshDetail::Light;
+    }
+    if (wanted != level) {
+        static constexpr std::array names{"full", "light", "skip"};
+        LOG_WARNING(Render_Vulkan, "Mesh detail: {} -> {} ({} MiB available)",
+                    names[static_cast<u32>(level)], names[static_cast<u32>(wanted)], *available);
+        level = wanted;
+    }
+    return level;
+}
+
+u64 MeshArenaMaxBytes(MeshDetail detail) {
+    return detail == MeshDetail::Full ? (u64{256} << 20) : (u64{96} << 20);
+}
+
+u64 MeshDrawMaxBytes(MeshDetail detail) {
+    return detail == MeshDetail::Full ? (u64{64} << 20) : (u64{24} << 20);
+}
+} // Anonymous namespace
+
 const RasterizerVulkan::MeshArena& RasterizerVulkan::AcquireMeshArena() {
     const u64 tick{scheduler.CurrentTick()};
     if (mesh_arena_current < mesh_arenas.size() && mesh_arenas[mesh_arena_current].tick == tick) {
@@ -328,7 +427,12 @@ const RasterizerVulkan::MeshArena& RasterizerVulkan::AcquireMeshArena() {
     // that did not fit: grow later arenas to hold them.
     // 256 MiB at most per arena (1 GiB arenas, one per submission in flight, are too much for a
     // phone's memory).
-    const u64 max_size{(std::min)(u64{256} << 20, u64{device.GetMaxStorageBufferRange()})};
+    // Less under memory pressure (CurrentMeshDetail): arenas past it are freed below.
+    const u64 max_size{(std::min)(MeshArenaMaxBytes(CurrentMeshDetail()),
+                                  u64{device.GetMaxStorageBufferRange()})};
+    if (mesh_arena_size > max_size) {
+        mesh_arena_size = max_size;
+    }
     for (MeshArena& arena : mesh_arenas) {
         if (arena.counted || !scheduler.IsFree(arena.tick)) {
             continue;
@@ -346,7 +450,7 @@ const RasterizerVulkan::MeshArena& RasterizerVulkan::AcquireMeshArena() {
         }
     }
     std::erase_if(mesh_arenas, [&](const MeshArena& arena) {
-        return arena.counted && arena.size < mesh_arena_size;
+        return arena.counted && arena.size != mesh_arena_size;
     });
     auto it{std::ranges::find_if(mesh_arenas, [](const MeshArena& arena) { return arena.counted; })};
     if (it == mesh_arenas.end()) {
@@ -599,8 +703,14 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         no_mesh = std::filesystem::exists(no_mesh_file);
     }
     const bool emulated_mesh{mesh_draw && pipeline->IsEmulatedMesh()};
+    const MeshDetail mesh_detail{emulated_mesh ? CurrentMeshDetail() : MeshDetail::Full};
+    if (emulated_mesh && mesh_detail == MeshDetail::Skip) {
+        report_failure("mesh detail: low memory");
+        TraceRenderState(is_indexed, "mesh-skipped", nullptr);
+        return;
+    }
     if (mesh_draw &&
-        (no_mesh || (!device.IsExtMeshShaderSupported() && !emulated_mesh) ||
+        (no_mesh ||(!device.IsExtMeshShaderSupported() && !emulated_mesh) ||
          (emulated_mesh && is_indirect))) {
         report_failure(no_mesh         ? "EDEN_NX2_NO_MESH"
                        : emulated_mesh ? "indirect emulated mesh draw"
@@ -673,7 +783,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         const u64 block_bytes{pipeline->MeshEmulationBlockBytes()};
         // Phone memory: one draw's output is capped (Android closed the app at Ocarina's Deku
         // Tree when these buffers grew). Groups past the cap are not drawn.
-        constexpr u64 MAX_DRAW_OUTPUT_BYTES{64ULL << 20};
+        const u64 MAX_DRAW_OUTPUT_BYTES{MeshDrawMaxBytes(mesh_detail)};
         if (!has_task && block_bytes != 0 && u64{groups} * block_bytes > MAX_DRAW_OUTPUT_BYTES) {
             static u64 capped{};
             if (capped++ % 1000 == 0) {
